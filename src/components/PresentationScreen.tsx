@@ -107,12 +107,12 @@ export default function PresentationScreen({
   const [currentVoicePref, setCurrentVoicePref] = useState<VoiceGenderPreference>(voicePreference);
   const [isMuted, setIsMutedState] = useState(getSoundMuted());
   const [isSpeaking, setIsSpeaking] = useState(false);
-  // Disabled by default when on web per teacher's request ("Khi đưa lên web thì giọng Ai không đọc nhé")
+  // Enabled by default so questions are read aloud with energetic MC voice automatically
   const [autoSpeakQuestion, setAutoSpeakQuestion] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('vts_auto_speak_ai') === 'true';
+      return localStorage.getItem('vts_auto_speak_ai') !== 'false';
     }
-    return false;
+    return true;
   });
 
   // Fullscreen State & Handlers
@@ -220,6 +220,12 @@ export default function PresentationScreen({
       const qSpeech = buildMCQuestionScript(currentQIndex, curQ.question, curQ.options);
       prefetchSpeech(qSpeech, { genderPreference: currentVoicePref, questionIndex: currentQIndex });
     }
+
+    const nextQ = questions[currentQIndex + 1];
+    if (nextQ) {
+      const nextSpeech = buildMCQuestionScript(currentQIndex + 1, nextQ.question, nextQ.options);
+      prefetchSpeech(nextSpeech, { genderPreference: currentVoicePref, questionIndex: currentQIndex + 1 });
+    }
   }, [currentQIndex, currentVoicePref, questions]);
 
   const proceedToQuestion = () => {
@@ -230,7 +236,7 @@ export default function PresentationScreen({
     playQuestionEnter();
 
     if (autoSpeakQuestion) {
-      triggerSpeak();
+      triggerSpeak(true);
     }
   };
 
@@ -343,8 +349,8 @@ export default function PresentationScreen({
     }, 2400);
   };
 
-  const triggerSpeak = () => {
-    if (isSpeaking) {
+  const triggerSpeak = (force: boolean = false) => {
+    if (isSpeaking && !force) {
       stopSpeaking();
       setIsSpeaking(false);
       return;
@@ -616,6 +622,10 @@ export default function PresentationScreen({
               {activeGame === 'WHEEL' && (
                 <WheelOfFortune
                   candidateList={getAvailableClassNames()}
+                  targetClass={selectedResult.className}
+                  targetDisplayText={selectedResult.displayText}
+                  targetStudentName={selectedResult.studentName}
+                  targetSTT={selectedResult.stt}
                   targetName={selectedResult.displayText}
                   onComplete={handleMinigameEnd}
                 />

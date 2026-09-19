@@ -415,13 +415,13 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
       switchToClientTTS();
     };
 
-    // Allow 4.5s for web serverless cold-start before switching to client fallback
+    // Allow up to 25s for high-fidelity Neural MC voice to synthesize and stream, avoiding premature robotic fallback
     const timeoutId = setTimeout(() => {
       if (!hasStarted && !hasFailed && currentAudio === audio) {
-        console.log('[TTS] Serverless cold-start taking >4.5s on web, switching to fast client TTS...');
+        console.log('[TTS] Audio streaming taking >25s, switching to client TTS fallback...');
         switchToClientTTS();
       }
-    }, 4500);
+    }, 25000);
 
     const playPromise = audio.play();
     if (playPromise !== undefined) {

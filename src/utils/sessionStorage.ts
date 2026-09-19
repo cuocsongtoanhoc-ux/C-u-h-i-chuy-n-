@@ -165,14 +165,18 @@ export async function pushSessionsToCloud(
 
   let firestoreSaved = 0;
 
-  // 1. If Firebase Auth is signed in, sync directly to Firestore
+  // 1. If Firebase Auth is signed in, sync directly to Firestore with full bidirectional sync
   try {
-    const { auth, saveSessionToCloud } = await import('../lib/firebase');
+    const { auth, syncUserDataWithCloud } = await import('../lib/firebase');
     if (auth.currentUser) {
-      for (const s of sessionsToPush) {
-        await saveSessionToCloud(s, auth.currentUser);
-        firestoreSaved++;
-      }
+      const { merged, uploadedCount } = await syncUserDataWithCloud(auth.currentUser, sessionsToPush);
+      firestoreSaved = uploadedCount;
+      setLastSyncTime(Date.now());
+      return {
+        success: true,
+        count: merged.length,
+        message: `Đã đồng bộ ${merged.length} chuyên đề lên Đám Mây Firestore cho tài khoản ${auth.currentUser.email || 'của bạn'}!`,
+      };
     }
   } catch (err) {
     console.warn('Firestore sync notice (continuing with server backup):', err);
@@ -214,7 +218,7 @@ export async function pushSessionsToCloud(
   return {
     success: false,
     count: 0,
-    message: 'Không thể kết nối đến máy chủ đám mây. Vui lòng kiểm tra đường truyền.',
+    message: 'Chưa đăng nhập Google hoặc không có kết nối đám mây. Hãy bấm "Đăng nhập Google" để đồng bộ mọi máy tính!',
   };
 }
 
@@ -227,13 +231,20 @@ export async function pullSessionsFromCloud(
   const syncKey = (customKey || getStoredSyncKey() || DEFAULT_TEACHER_KEY).trim().toLowerCase();
   let cloudSessions: SavedSession[] = [];
 
-  // 1. Try Firestore if user is authenticated
+  // 1. Try Firestore if user is authenticated with bidirectional sync
   try {
-    const { auth, fetchUserSessionsFromCloud } = await import('../lib/firebase');
+    const { auth, syncUserDataWithCloud } = await import('../lib/firebase');
     if (auth.currentUser) {
-      const fsSessions = await fetchUserSessionsFromCloud(auth.currentUser);
-      if (fsSessions && fsSessions.length > 0) {
-        cloudSessions = fsSessions;
+      const local = getSavedSessions();
+      const { merged, downloadedCount } = await syncUserDataWithCloud(auth.currentUser, local);
+      if (merged.length > 0) {
+        setLastSyncTime(Date.now());
+        return {
+          success: true,
+          sessions: merged,
+          count: merged.length,
+          message: `Đã tải và đồng bộ ${merged.length} chuyên đề từ Firestore Đám Mây (${auth.currentUser.email})!`,
+        };
       }
     }
   } catch (err) {

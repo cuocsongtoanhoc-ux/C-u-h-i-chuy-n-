@@ -84,16 +84,16 @@ export async function saveSessionToCloud(session: SavedSession, user: User): Pro
   try {
     const dataToSave = {
       id: session.id,
-      title: session.title,
-      description: session.description || '',
-      createdAt: session.createdAt,
+      title: (session.title || 'Chuyên đề không tên').trim().slice(0, 300),
+      description: (session.description || '').slice(0, 1000),
+      createdAt: typeof session.createdAt === 'number' && !isNaN(session.createdAt) ? session.createdAt : Date.now(),
       updatedAt: Date.now(),
       ownerId: user.uid,
       ownerEmail: user.email || '',
-      questions: session.questions,
-      selectionMode: session.selectionMode,
-      classConfig: session.classConfig,
-      customStudents: session.customStudents || [],
+      questions: Array.isArray(session.questions) ? session.questions.slice(0, 200) : [],
+      selectionMode: session.selectionMode || 'class_stt',
+      classConfig: session.classConfig || { grade10: true, grade11: true, grade12: true, maxSTT: 40 },
+      customStudents: Array.isArray(session.customStudents) ? session.customStudents : [],
       voicePref: session.voicePref || 'aoede'
     };
 
@@ -124,11 +124,86 @@ export async function fetchUserSessionsFromCloud(user: User): Promise<SavedSessi
     snapshot.forEach((d) => {
       sessions.push(d.data() as SavedSession);
     });
+
+    // If no sessions found by UID and user has email, try querying by ownerEmail
+    if (sessions.length === 0 && user.email) {
+      try {
+        const qEmail = query(
+          collection(db, pathForGetDocs),
+          where('ownerEmail', '==', user.email)
+        );
+        const emailSnap = await getDocs(qEmail);
+        emailSnap.forEach((d) => {
+          sessions.push(d.data() as SavedSession);
+        });
+      } catch (emailErr) {
+        console.debug('Email query fallback notice:', emailErr);
+      }
+    }
+
     return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, pathForGetDocs);
     return [];
   }
+}
+
+/**
+ * Robust Bidirectional Cloud Sync:
+ * 1. Pulls all cloud sessions for user
+ * 2. Merges with local sessions
+ * 3. Uploads any local sessions missing in cloud
+ * 4. Saves merged sessions to localStorage
+ */
+export async function syncUserDataWithCloud(
+  user: User,
+  localSessions: SavedSession[]
+): Promise<{ merged: SavedSession[]; uploadedCount: number; downloadedCount: number }> {
+  const cloudSessions = await fetchUserSessionsFromCloud(user);
+  const cloudMap = new Map<string, SavedSession>();
+  cloudSessions.forEach(s => cloudMap.set(s.id, s));
+
+  const localMap = new Map<string, SavedSession>();
+  localSessions.forEach(s => localMap.set(s.id, s));
+
+  let uploadedCount = 0;
+  let downloadedCount = 0;
+
+  // 1. Check local sessions: upload if missing in cloud or local is newer
+  for (const localSess of localSessions) {
+    const cloudSess = cloudMap.get(localSess.id);
+    if (!cloudSess) {
+      // Local exists, missing in cloud -> Upload to cloud
+      try {
+        await saveSessionToCloud(localSess, user);
+        cloudMap.set(localSess.id, localSess);
+        uploadedCount++;
+      } catch (err) {
+        console.warn('Failed to upload local session to cloud:', localSess.title, err);
+      }
+    } else if (localSess.updatedAt > cloudSess.updatedAt) {
+      // Local is newer -> update cloud
+      try {
+        await saveSessionToCloud(localSess, user);
+        cloudMap.set(localSess.id, localSess);
+        uploadedCount++;
+      } catch (err) {
+        console.warn('Failed to update cloud session:', localSess.title, err);
+      }
+    }
+  }
+
+  // 2. Any session in cloud but missing locally or cloud is newer
+  for (const cloudSess of cloudSessions) {
+    const localSess = localMap.get(cloudSess.id);
+    if (!localSess || cloudSess.updatedAt > localSess.updatedAt) {
+      localMap.set(cloudSess.id, cloudSess);
+      downloadedCount++;
+    }
+  }
+
+  const merged = Array.from(localMap.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  return { merged, uploadedCount, downloadedCount };
 }
 
 // Real-time listener for cloud sessions

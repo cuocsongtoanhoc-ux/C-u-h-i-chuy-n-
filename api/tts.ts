@@ -88,36 +88,47 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
 
 // 2. High-fidelity Neural Edge TTS (HoaiMy & NamMinh Neural) - Extremely lively, natural MC intonation, 0 API key required!
 async function generateEdgeSpeech(text: string, voiceName = 'Aoede'): Promise<Buffer | null> {
+  let tts: MsEdgeTTS | null = null;
+  let timeoutTimer: NodeJS.Timeout | null = null;
+
   try {
     const isMale = ['puck', 'zephyr', 'male'].includes(voiceName.toLowerCase());
     // 100% Native Vietnamese Voices: NamMinh (Male MC) and HoaiMy (Female MC)
     const edgeVoice = isMale ? 'vi-VN-NamMinhNeural' : 'vi-VN-HoaiMyNeural';
-    const tts = new MsEdgeTTS();
+    tts = new MsEdgeTTS();
     await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
     // Clean formatting markers
     const cleanText = text.replace(/[*#_`]/g, '').trim();
-    if (!cleanText) return null;
+    if (!cleanText) {
+      try { tts.close(); } catch {}
+      return null;
+    }
 
     const { audioStream } = tts.toStream(cleanText, { rate: '+18%', pitch: '+4Hz' });
 
     return await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
-      const timeout = setTimeout(() => {
-        reject(new Error('Edge TTS stream timeout'));
-      }, 7000);
+      timeoutTimer = setTimeout(() => {
+        try { tts?.close(); } catch {}
+        reject(new Error('Edge TTS stream timeout after 15s'));
+      }, 15000);
 
       audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
       audioStream.on('end', () => {
-        clearTimeout(timeout);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        try { tts?.close(); } catch {}
         resolve(Buffer.concat(chunks));
       });
       audioStream.on('error', (err: any) => {
-        clearTimeout(timeout);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        try { tts?.close(); } catch {}
         reject(err);
       });
     });
   } catch (err) {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    try { tts?.close(); } catch {}
     console.warn('[Vercel TTS] Edge TTS notice (trying fallback):', err);
     return null;
   }
