@@ -336,11 +336,20 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
   const targetVoice = resolveGeminiVoiceName(options.genderPreference, options.questionIndex ?? 0);
   const cacheKey = `${targetVoice}:${trimmed}`;
 
+  const handleAudioFailure = () => {
+    currentAudio = null;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window && getVietnameseVoices().length > 0) {
+      fallbackWebSpeech(trimmed, options);
+    } else {
+      playClientGoogleTTS(trimmed, options);
+    }
+  };
+
   // 1. Check if high-fidelity backend audio was already pre-fetched
   if (audioPreloadCache.has(cacheKey)) {
     const audio = audioPreloadCache.get(cacheKey)!;
     audio.currentTime = 0;
-    audio.playbackRate = options.rate ?? 1.22;
+    audio.playbackRate = options.rate ?? 1.08;
     currentAudio = audio;
 
     let hasStarted = false;
@@ -355,12 +364,11 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
       options.onEnd?.();
     };
     audio.onerror = () => {
-      currentAudio = null;
-      playClientGoogleTTS(trimmed, options);
+      handleAudioFailure();
     };
 
     audio.play().catch(() => {
-      playClientGoogleTTS(trimmed, options);
+      handleAudioFailure();
     });
     return;
   }
@@ -369,7 +377,7 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
   try {
     const audioUrl = `/api/tts?text=${encodeURIComponent(trimmed)}&voice=${encodeURIComponent(targetVoice)}`;
     const audio = new Audio(audioUrl);
-    audio.playbackRate = options.rate ?? 1.22;
+    audio.playbackRate = options.rate ?? 1.08;
     currentAudio = audio;
 
     let hasStarted = false;
@@ -383,7 +391,11 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
         audio.src = '';
         currentAudio = null;
       }
-      playClientGoogleTTS(trimmed, options);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window && getVietnameseVoices().length > 0) {
+        fallbackWebSpeech(trimmed, options);
+      } else {
+        playClientGoogleTTS(trimmed, options);
+      }
     };
 
     audio.onplay = () => {

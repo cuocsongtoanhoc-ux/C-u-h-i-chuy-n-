@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { GoogleGenAI, Modality } from '@google/genai';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 // In-memory cache for synthesized audio
 const ttsAudioCache = new Map<string, { buffer: Buffer; mimeType: string }>();
@@ -29,7 +30,7 @@ function pcmToWav(pcmData: Buffer, sampleRate = 24000, numChannels = 1, bitsPerS
   return Buffer.concat([header, pcmData]);
 }
 
-// Generate lively energetic Vietnamese speech via Gemini TTS
+// 1. Generate lively energetic Vietnamese speech via Gemini TTS (when API key is present)
 async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
@@ -44,7 +45,16 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
     const validVoices = ['Aoede', 'Puck', 'Kore', 'Zephyr'];
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Aoede';
 
-    const promptText = `Đọc bằng tiếng Việt thật thanh thoát, sôi động, vui tươi, hào hứng, phong cách MC chương trình trường học tràn đầy năng lượng, dứt khoát, tự nhiên: ${text.trim()}`;
+    let promptText = '';
+    if (chosenVoice === 'Aoede') {
+      promptText = `Đọc bằng giọng nữ tiếng Việt truyền cảm, thanh thoát, sôi động, tươi vui, tốc độ nhanh nhẹn, phong cách MC dẫn gameshow trường học hào hứng, dứt khoát: ${text.trim()}`;
+    } else if (chosenVoice === 'Kore') {
+      promptText = `Đọc bằng giọng nữ tiếng Việt trẻ trung, hoạt bát, tươi sáng, rạng rỡ, tốc độ nhanh nhẹn, dứt khoát, phong cách MC sân khấu sôi nổi: ${text.trim()}`;
+    } else if (chosenVoice === 'Puck') {
+      promptText = `Đọc bằng giọng nam tiếng Việt hào sảng, sôi động, hoạt náo, vang rền, tốc độ nhanh nhẹn, phong cách MC gameshow trường học đầy nhiệt huyết: ${text.trim()}`;
+    } else {
+      promptText = `Đọc bằng giọng nam tiếng Việt thanh niên nhanh nhẹn, dứt khoát, phong độ, nhiệt huyết, tràn đầy năng lượng: ${text.trim()}`;
+    }
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-tts-preview',
@@ -68,10 +78,46 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
     const errMsg = err?.message || '';
     if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota exceeded')) {
       geminiTtsCooldownUntil = Date.now() + 10 * 60 * 1000;
-      console.log('[Vercel TTS] Gemini TTS 429 quota reached, using Google TTS fallback.');
+      console.log('[Vercel TTS] Gemini TTS 429 quota reached, switching to Neural Edge TTS.');
     } else {
       console.warn('[Vercel TTS] Gemini TTS notice:', errMsg);
     }
+    return null;
+  }
+}
+
+// 2. High-fidelity Neural Edge TTS (HoaiMy & NamMinh Neural) - Extremely lively, natural MC intonation, 0 API key required!
+async function generateEdgeSpeech(text: string, voiceName = 'Aoede'): Promise<Buffer | null> {
+  try {
+    const isMale = voiceName === 'Puck' || voiceName === 'Zephyr';
+    const edgeVoice = isMale ? 'vi-VN-NamMinhNeural' : 'vi-VN-HoaiMyNeural';
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+    // Clean formatting markers
+    const cleanText = text.replace(/[*#_`]/g, '').trim();
+    if (!cleanText) return null;
+
+    const { audioStream } = tts.toStream(cleanText, { rate: '+18%', pitch: '+4Hz' });
+
+    return await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const timeout = setTimeout(() => {
+        reject(new Error('Edge TTS stream timeout'));
+      }, 7000);
+
+      audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      audioStream.on('end', () => {
+        clearTimeout(timeout);
+        resolve(Buffer.concat(chunks));
+      });
+      audioStream.on('error', (err: any) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  } catch (err) {
+    console.warn('[Vercel TTS] Edge TTS notice (trying fallback):', err);
     return null;
   }
 }
@@ -171,7 +217,21 @@ export default async function handler(
       return;
     }
 
-    // 2. Secondary fallback: Google TTS chunks
+    // 2. High-Fidelity Neural MC Voices (HoaiMy / NamMinh Neural) - Lively, energetic MC tone
+    const edgeAudio = await generateEdgeSpeech(text, voice);
+    if (edgeAudio) {
+      const entry = { buffer: edgeAudio, mimeType: 'audio/mpeg' };
+      ttsAudioCache.set(cacheKey, entry);
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      res.setHeader('Content-Length', edgeAudio.length.toString());
+      res.end(edgeAudio);
+      return;
+    }
+
+    // 3. Last-resort fallback: Google TTS chunks
     const chunks = splitTextForTTS(text);
     const audioBuffers: Buffer[] = [];
     for (const chunk of chunks) {

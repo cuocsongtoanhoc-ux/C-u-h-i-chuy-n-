@@ -7,6 +7,7 @@ import mammoth from "mammoth";
 import fs from "fs";
 import https from "https";
 import dotenv from "dotenv";
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
 dotenv.config();
 
@@ -515,6 +516,42 @@ function splitTextForTTS(text: string, maxLen = 180): string[] {
   return chunks.filter((c) => c.trim().length > 0);
 }
 
+// 2. High-fidelity Neural Edge TTS (HoaiMy & NamMinh Neural) - Extremely lively, natural MC intonation, 0 API key required!
+async function generateEdgeSpeech(text: string, voiceName = 'Aoede'): Promise<Buffer | null> {
+  try {
+    const isMale = voiceName === 'Puck' || voiceName === 'Zephyr';
+    const edgeVoice = isMale ? 'vi-VN-NamMinhNeural' : 'vi-VN-HoaiMyNeural';
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+    // Clean formatting markers
+    const cleanText = text.replace(/[*#_`]/g, '').trim();
+    if (!cleanText) return null;
+
+    const { audioStream } = tts.toStream(cleanText, { rate: '+18%', pitch: '+4Hz' });
+
+    return await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const timeout = setTimeout(() => {
+        reject(new Error('Edge TTS stream timeout'));
+      }, 7000);
+
+      audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      audioStream.on('end', () => {
+        clearTimeout(timeout);
+        resolve(Buffer.concat(chunks));
+      });
+      audioStream.on('error', (err: any) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  } catch (err) {
+    console.warn('[Server TTS] Edge TTS notice (trying fallback):', err);
+    return null;
+  }
+}
+
 // Vietnamese Text-To-Speech Endpoint (High-fidelity, energetic MC delivery)
 app.get("/api/tts", async (req, res) => {
   try {
@@ -546,7 +583,15 @@ app.get("/api/tts", async (req, res) => {
             return entry;
           }
 
-          // 2. Secondary fallback: Google TTS chunks
+          // 2. High-fidelity Neural Edge TTS (HoaiMy / NamMinh Neural)
+          const edgeAudio = await generateEdgeSpeech(text, voice);
+          if (edgeAudio) {
+            const entry = { buffer: edgeAudio, mimeType: 'audio/mpeg' };
+            ttsAudioCache.set(cacheKey, entry);
+            return entry;
+          }
+
+          // 3. Secondary fallback: Google TTS chunks
           try {
             const chunks = splitTextForTTS(text);
             const audioBuffers: Buffer[] = [];
