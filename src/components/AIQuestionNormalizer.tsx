@@ -15,6 +15,7 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { Question } from '../types';
+import { parseFlexibleQuestions, formatQuestionsToManualText } from '../utils/questionParser';
 
 interface AIQuestionNormalizerProps {
   onApplyQuestions: (formattedText: string, questionsList: Question[]) => void;
@@ -64,6 +65,30 @@ export default function AIQuestionNormalizer({
     }
   };
 
+  // Helper to convert file to Base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1] || '';
+        resolve(base64);
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Helper to read text file if applicable
+  const fileToText = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string) || '');
+      reader.onerror = () => resolve('');
+      reader.readAsText(file, 'utf-8');
+    });
+  };
+
   const handleNormalize = async () => {
     if (!rawText.trim() && !selectedFile) {
       setError('Vui lòng dán văn bản hoặc tải lên tệp câu hỏi (Word, PDF, Ảnh).');
@@ -73,32 +98,79 @@ export default function AIQuestionNormalizer({
     setIsLoading(true);
     setError(null);
 
+    let extractedFileText = '';
+    let fileBase64 = '';
+
+    if (selectedFile) {
+      const isTextFile = selectedFile.type.startsWith('text/') || selectedFile.name.endsWith('.txt');
+      if (isTextFile) {
+        extractedFileText = await fileToText(selectedFile);
+      }
+      try {
+        fileBase64 = await fileToBase64(selectedFile);
+      } catch (e) {
+        console.warn('File read warning:', e);
+      }
+    }
+
+    const textPayload = (rawText.trim() + (extractedFileText ? `\n\n${extractedFileText}` : '')).trim();
+
     try {
-      const formData = new FormData();
-      if (rawText.trim()) {
-        formData.append('rawText', rawText.trim());
-      }
-      if (selectedFile) {
-        formData.append('file', selectedFile);
+      // 1. First attempt: call server endpoint /api/normalize-questions with JSON payload
+      // JSON is 100% compatible with both Vercel Serverless Functions and Express backend!
+      let serverSuccess = false;
+
+      try {
+        const payload: any = {
+          rawText: textPayload,
+        };
+
+        if (selectedFile && fileBase64) {
+          payload.fileBase64 = fileBase64;
+          payload.fileName = selectedFile.name;
+          payload.fileMimeType = selectedFile.type || 'application/octet-stream';
+        }
+
+        const res = await fetch('/api/normalize-questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data.standardText && data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+              setResultText(data.standardText);
+              setResultQuestions(data.questions);
+              serverSuccess = true;
+              return;
+            }
+          }
+        }
+      } catch (apiErr) {
+        console.warn('Backend normalize endpoint notice:', apiErr);
       }
 
-      const res = await fetch('/api/normalize-questions', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Lỗi máy chủ (${res.status})`);
+      // 2. If server was unreachable, returned 404/500, or static web hosting:
+      // Seamlessly fall back to client-side intelligent regex parser!
+      if (!serverSuccess && textPayload) {
+        const parsed = parseFlexibleQuestions(textPayload);
+        if (parsed.questions.length > 0) {
+          const formatted = formatQuestionsToManualText(parsed.questions);
+          setResultText(formatted);
+          setResultQuestions(parsed.questions);
+          return;
+        }
       }
 
-      const data = await res.json();
-      if (data.standardText && data.questions) {
-        setResultText(data.standardText);
-        setResultQuestions(data.questions);
-      } else {
-        throw new Error('Định dạng dữ liệu trả về từ AI không hợp lệ.');
+      // 3. If still not resolved
+      if (selectedFile && !textPayload) {
+        throw new Error('Máy chủ web chưa kích hoạt khóa AI để đọc trực tiếp hình ảnh/PDF. Thầy/cô vui lòng copy dán văn bản câu hỏi vào ô bên trên để chuẩn hóa tức thì!');
       }
+
+      throw new Error('Không thể nhận diện được câu hỏi nào trong nội dung này. Vui lòng kiểm tra lại văn bản hoặc dán các câu hỏi rõ ràng hơn.');
     } catch (err: any) {
       console.error('Normalization error:', err);
       setError(err.message || 'Không thể chuẩn hóa câu hỏi. Vui lòng thử lại.');

@@ -35,11 +35,12 @@ export interface GameSelectionResult {
 }
 
 export type MinigameType = 
-  | 'WHEEL'       // 🎡 Vòng Quay Kỳ Diệu
-  | 'VTS_BALLS'   // 🔮 Quả Cầu May Mắn VTS
-  | 'SLOT'        // 🎰 Máy Bấm Số Jackpot Vegas
-  | 'ROCKET'      // 🚀 Tên Lửa Vũ Trụ VTS
-  | 'CHEST';      // 🎁 Rương Bí Ẩn Ma Thuật
+  | 'WHEEL'           // 🎡 Vòng Quay Kỳ Diệu
+  | 'VTS_BALLS'       // 🔮 Quả Cầu May Mắn VTS
+  | 'SLOT'            // 🎰 Máy Bấm Số Jackpot Vegas
+  | 'ROCKET'          // 🚀 Tên Lửa Vũ Trụ VTS
+  | 'CHEST'           // 🎁 Rương Bí Ẩn Ma Thuật
+  | 'FLYING_AVATARS'; // 🛸 Biệt Đội Avatar Bay Lượn
 
 export interface SavedSession {
   id: string;
@@ -52,4 +53,6 @@ export interface SavedSession {
   classConfig: ClassSelectionConfig;
   customStudents?: StudentItem[];
   voicePref?: string;
+  ownerId?: string;
+  ownerEmail?: string;
 }

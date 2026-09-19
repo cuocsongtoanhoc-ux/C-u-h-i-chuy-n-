@@ -6,6 +6,9 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import mammoth from "mammoth";
 import fs from "fs";
 import https from "https";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 const PORT = 3000;
@@ -123,13 +126,111 @@ function extractTextFromBuffer(buffer: Buffer): string {
   return buffer.toString('utf8');
 }
 
+// Regex fallback for Vietnamese quiz question parsing
+function serverParseFlexibleQuestions(rawText: string) {
+  if (!rawText || !rawText.trim()) {
+    return { questions: [], detectedCount: 0, standardText: '' };
+  }
+
+  const lines = rawText.split(/\r?\n/);
+  const questions: Array<{ question: string; options: string[]; correctAnswer: number; explanation?: string }> = [];
+
+  let curQuestionText = '';
+  let curOptions: string[] = [];
+  let curAnswerIndex = -1;
+  let curExplanation = '';
+
+  const finalizeCurrentQuestion = () => {
+    if (!curQuestionText.trim()) return;
+
+    let cleanText = curQuestionText
+      .replace(/^(?:câu\s*(?:hỏi)?\s*\d+|bài\s*\d+|\d+)[\.\:\)\-]?\s*/i, '')
+      .trim();
+
+    if (!cleanText) cleanText = curQuestionText.trim();
+
+    if (curOptions.length >= 2) {
+      while (curOptions.length < 4) {
+        curOptions.push(`Phương án ${String.fromCharCode(65 + curOptions.length)}`);
+      }
+      const finalOptions = curOptions.slice(0, 4);
+      const finalAns = curAnswerIndex >= 0 && curAnswerIndex < finalOptions.length ? curAnswerIndex : 0;
+
+      questions.push({
+        question: cleanText,
+        options: finalOptions,
+        correctAnswer: finalAns,
+        explanation: curExplanation.trim() || undefined,
+      });
+    }
+
+    curQuestionText = '';
+    curOptions = [];
+    curAnswerIndex = -1;
+    curExplanation = '';
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (/^(?:câu\s*(?:hỏi)?\s*\d+|bài\s*\d+|\d+)[\.\:\)\-]?/i.test(trimmed)) {
+      finalizeCurrentQuestion();
+      curQuestionText = trimmed;
+      continue;
+    }
+
+    const ansMatch = trimmed.match(/^(?:đáp\s*án(?:\s*đúng)?|đ\/a|đa|key|ans(?:wer)?|chọn)\s*[:\.]?\s*([A-D])/i);
+    if (ansMatch) {
+      curAnswerIndex = ['A', 'B', 'C', 'D'].indexOf(ansMatch[1].toUpperCase());
+      continue;
+    }
+
+    const optMatch = trimmed.match(/^(\*?\s*[A-D]\*?|\([A-D]\)|\[[A-D]\])[\.\:\)\/]\s*(.*)$/i);
+    if (optMatch) {
+      const letter = optMatch[1].replace(/[\(\)\[\]\*\s]/g, '').toUpperCase();
+      let optText = optMatch[2].trim();
+      if (optMatch[1].includes('*') || optText.startsWith('*') || optText.endsWith('*')) {
+        curAnswerIndex = ['A', 'B', 'C', 'D'].indexOf(letter);
+        optText = optText.replace(/\*/g, '').trim();
+      }
+      curOptions.push(optText);
+      continue;
+    }
+
+    if (curOptions.length > 0) {
+      curOptions[curOptions.length - 1] += ' ' + trimmed;
+    } else if (curQuestionText) {
+      curQuestionText += ' ' + trimmed;
+    } else {
+      curQuestionText = trimmed;
+    }
+  }
+
+  finalizeCurrentQuestion();
+
+  const letters = ['A', 'B', 'C', 'D'];
+  const standardText = questions
+    .map((q, idx) => {
+      const opts = q.options.map((opt, oIdx) => `${letters[oIdx]}. ${opt}`).join('\n');
+      const ansChar = letters[q.correctAnswer] || 'A';
+      return `Câu ${idx + 1}: ${q.question}\n${opts}\nĐáp án: ${ansChar}`;
+    })
+    .join('\n\n');
+
+  return { questions, detectedCount: questions.length, standardText };
+}
+
 // Dedicated AI Endpoint to normalize messy questions, unformatted text, or uploaded files (.doc, .docx, .pdf, images)
 app.post("/api/normalize-questions", upload.single('file'), async (req, res) => {
   try {
-    const rawText = req.body.rawText || "";
+    let rawText = req.body.rawText || "";
     const file = req.file;
+    const fileBase64 = req.body.fileBase64;
+    const fileName = req.body.fileName || (file ? file.originalname : "");
+    const fileMimeType = req.body.fileMimeType || (file ? file.mimetype : "");
 
-    if (!rawText && !file) {
+    if (!rawText && !file && !fileBase64) {
       return res.status(400).json({ error: "Vui lòng dán văn bản hoặc tải lên tệp tài liệu câu hỏi." });
     }
 
@@ -181,50 +282,86 @@ Quy tắc chuẩn hóa nghiêm ngặt:
       } else if (file.originalname.toLowerCase().endsWith('.docx')) {
         const result = await mammoth.extractRawText({ buffer: file.buffer });
         parts.push({ text: `NỘI DUNG TỪ TỆP WORD (.docx):\n${result.value}` });
+        if (!rawText) rawText = result.value;
       } else if (file.originalname.toLowerCase().endsWith('.doc')) {
         const docText = extractTextFromBuffer(file.buffer);
         parts.push({ text: `NỘI DUNG TỪ TỆP WORD (.doc):\n${docText}` });
+        if (!rawText) rawText = docText;
       } else if (mimeType.startsWith('text/')) {
-        parts.push({ text: `NỘI DUNG TỪ TỆP VĂN BẢN:\n${file.buffer.toString('utf-8')}` });
+        const txt = file.buffer.toString('utf-8');
+        parts.push({ text: `NỘI DUNG TỪ TỆP VĂN BẢN:\n${txt}` });
+        if (!rawText) rawText = txt;
       } else {
-        parts.push({ text: `NỘI DUNG TỆP:\n${file.buffer.toString('utf-8')}` });
+        const txt = file.buffer.toString('utf-8');
+        parts.push({ text: `NỘI DUNG TỆP:\n${txt}` });
+        if (!rawText) rawText = txt;
+      }
+    } else if (fileBase64) {
+      const buffer = Buffer.from(fileBase64, 'base64');
+      const lowerName = fileName.toLowerCase();
+      if (fileMimeType === 'application/pdf' || fileMimeType.startsWith('image/')) {
+        parts.push({
+          inlineData: {
+            mimeType: fileMimeType,
+            data: fileBase64
+          }
+        });
+      } else if (lowerName.endsWith('.docx')) {
+        const result = await mammoth.extractRawText({ buffer });
+        parts.push({ text: `NỘI DUNG TỪ TỆP WORD (.docx):\n${result.value}` });
+        if (!rawText) rawText = result.value;
+      } else {
+        const txt = buffer.toString('utf-8');
+        parts.push({ text: `NỘI DUNG TỆP:\n${txt}` });
+        if (!rawText) rawText = txt;
       }
     }
 
-    const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            standardText: { type: Type.STRING },
-            detectedCount: { type: Type.INTEGER },
-            questions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  question: { type: Type.STRING },
-                  options: { 
-                    type: Type.ARRAY, 
-                    items: { type: Type.STRING } 
+    try {
+      const response = await callGeminiWithRetry(() => ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: { parts },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              standardText: { type: Type.STRING },
+              detectedCount: { type: Type.INTEGER },
+              questions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    question: { type: Type.STRING },
+                    options: { 
+                      type: Type.ARRAY, 
+                      items: { type: Type.STRING } 
+                    },
+                    correctAnswer: { type: Type.INTEGER },
+                    explanation: { type: Type.STRING }
                   },
-                  correctAnswer: { type: Type.INTEGER },
-                  explanation: { type: Type.STRING }
-                },
-                required: ["question", "options", "correctAnswer"]
+                  required: ["question", "options", "correctAnswer"]
+                }
               }
-            }
-          },
-          required: ["standardText", "questions", "detectedCount"]
+            },
+            required: ["standardText", "questions", "detectedCount"]
+          }
+        }
+      }));
+
+      const parsedResult = JSON.parse(response.text);
+      return res.json(parsedResult);
+    } catch (aiError) {
+      console.warn("Gemini normalize warning, using regex fallback:", aiError);
+      if (rawText) {
+        const fallback = serverParseFlexibleQuestions(rawText);
+        if (fallback.questions.length > 0) {
+          return res.json(fallback);
         }
       }
-    }));
-
-    const parsedResult = JSON.parse(response.text);
-    res.json(parsedResult);
+      throw aiError;
+    }
   } catch (error: any) {
     console.error("Error normalizing questions:", error);
     res.status(500).json({ error: error.message || "Không thể chuẩn hóa câu hỏi bằng AI." });
@@ -272,7 +409,16 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
     const validVoices = ['Aoede', 'Puck', 'Kore', 'Zephyr'];
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Aoede';
 
-    const promptText = `Đọc bằng tiếng Việt thật thanh thoát, sôi động, vui tươi, hào hứng, phong cách MC chương trình trường học tràn đầy năng lượng, dứt khoát, tự nhiên: ${text.trim()}`;
+    let promptText = '';
+    if (chosenVoice === 'Aoede') {
+      promptText = `Đọc bằng giọng nữ tiếng Việt truyền cảm, thanh thoát, sôi động, tươi vui, tốc độ nhanh nhẹn, phong cách MC dẫn gameshow trường học hào hứng, dứt khoát: ${text.trim()}`;
+    } else if (chosenVoice === 'Kore') {
+      promptText = `Đọc bằng giọng nữ tiếng Việt trẻ trung, hoạt bát, tươi sáng, rạng rỡ, tốc độ nhanh nhẹn, dứt khoát, phong cách MC sân khấu sôi nổi: ${text.trim()}`;
+    } else if (chosenVoice === 'Puck') {
+      promptText = `Đọc bằng giọng nam tiếng Việt hào sảng, sôi động, hoạt náo, vang rền, tốc độ nhanh nhẹn, phong cách MC gameshow trường học đầy nhiệt huyết: ${text.trim()}`;
+    } else {
+      promptText = `Đọc bằng giọng nam tiếng Việt thanh niên nhanh nhẹn, dứt khoát, phong độ, nhiệt huyết, tràn đầy năng lượng: ${text.trim()}`;
+    }
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-tts-preview',
@@ -295,7 +441,6 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
   } catch (err: any) {
     const errMsg = err?.message || '';
     if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota exceeded') || errMsg.includes('quota')) {
-      // Cooldown for 10 minutes before attempting Gemini TTS again to avoid spamming the exhausted quota
       geminiTtsCooldownUntil = Date.now() + 10 * 60 * 1000;
       console.log('[TTS] Gemini TTS free-tier quota reached (429). Seamlessly using Google TTS audio fallback.');
     } else {
@@ -438,6 +583,94 @@ app.get("/api/tts", async (req, res) => {
   } catch (error) {
     console.error("TTS endpoint error:", error);
     res.status(500).json({ error: "Failed to synthesize Vietnamese audio." });
+  }
+});
+
+// Cloud Sync In-Memory / File Persistent Store for cross-device synchronization
+const cloudSyncStore = new Map<string, any>();
+const CLOUD_SYNC_DIR = path.join(process.cwd(), '.sync_data');
+try {
+  if (!fs.existsSync(CLOUD_SYNC_DIR)) {
+    fs.mkdirSync(CLOUD_SYNC_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Sync dir notice:', e);
+}
+
+app.post("/api/cloud-sync/save", (req, res) => {
+  try {
+    const { syncKey, sessions, activeSession } = req.body;
+    if (!syncKey || !sessions) {
+      return res.status(400).json({ error: "syncKey and sessions are required." });
+    }
+
+    const cleanKey = String(syncKey).trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '');
+    const payload = {
+      syncKey: cleanKey,
+      updatedAt: Date.now(),
+      sessions,
+      activeSession
+    };
+
+    cloudSyncStore.set(cleanKey, payload);
+    cloudSyncStore.set('latest_school_session', payload);
+
+    try {
+      const filePath = path.join(CLOUD_SYNC_DIR, `${cleanKey}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(CLOUD_SYNC_DIR, 'latest.json'), JSON.stringify(payload, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn('Local backup write notice:', err);
+    }
+
+    res.json({ success: true, syncKey: cleanKey, message: "Đã lưu trữ dữ liệu đồng bộ đám mây thành công!" });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Failed to save cloud sync data." });
+  }
+});
+
+app.get("/api/cloud-sync/load/:syncKey", (req, res) => {
+  try {
+    const syncKey = String(req.params.syncKey).trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '');
+    let data = cloudSyncStore.get(syncKey);
+
+    if (!data) {
+      const filePath = path.join(CLOUD_SYNC_DIR, `${syncKey}.json`);
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        data = JSON.parse(raw);
+        cloudSyncStore.set(syncKey, data);
+      }
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Không tìm thấy dữ liệu đồng bộ với mã này." });
+    }
+
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Failed to load cloud sync data." });
+  }
+});
+
+app.get("/api/cloud-sync/latest", (req, res) => {
+  try {
+    let data = cloudSyncStore.get('latest_school_session');
+    if (!data) {
+      const filePath = path.join(CLOUD_SYNC_DIR, 'latest.json');
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        data = JSON.parse(raw);
+      }
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Chưa có dữ liệu đồng bộ nào trên đám mây." });
+    }
+
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Failed to load latest sync data." });
   }
 });
 

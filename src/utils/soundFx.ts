@@ -370,3 +370,121 @@ export function playWrongAnswerSound() {
   }
 }
 
+// 11. Funny Cartoon Boing (Spring / Bouncing Avatar)
+export function playCartoonBoing(pitch = 380) {
+  if (isMuted) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    // Frequency sweeps down then bounces rapidly up and down like a spring
+    osc.frequency.setValueAtTime(pitch * 0.7, now);
+    osc.frequency.exponentialRampToValueAtTime(pitch * 1.8, now + 0.08);
+    osc.frequency.exponentialRampToValueAtTime(pitch * 1.1, now + 0.16);
+    osc.frequency.exponentialRampToValueAtTime(pitch * 1.5, now + 0.24);
+    osc.frequency.exponentialRampToValueAtTime(pitch * 1.2, now + 0.35);
+
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.4);
+  } catch (e) {
+    console.debug('Audio error', e);
+  }
+}
+
+// 12. Funny Cartoon Slide Whistle (Ascending Whoop)
+export function playCartoonWhistle() {
+  if (isMuted) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.35);
+
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.4);
+  } catch (e) {
+    console.debug('Audio error', e);
+  }
+}
+
+// 13. Crisp Bubble Pop Sound
+export function playBubblePop(freq = 900) {
+  if (isMuted) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq * 0.6, now);
+    osc.frequency.exponentialRampToValueAtTime(freq * 1.6, now + 0.05);
+
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.07);
+  } catch (e) {
+    console.debug('Audio error', e);
+  }
+}
+
+// 14. Funny UFO Laser Beam Zapper
+export function playUfoLaser() {
+  if (isMuted) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 0.22);
+
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.23);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.24);
+  } catch (e) {
+    console.debug('Audio error', e);
+  }
+}
+
+

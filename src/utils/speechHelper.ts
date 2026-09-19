@@ -55,16 +55,23 @@ if (typeof window !== 'undefined') {
   window.addEventListener('touchstart', handleInteraction, { once: true, passive: true });
 }
 
-// Helper to find Vietnamese voices in Web Speech API
+// Helper to find Vietnamese voices in Web Speech API with natural/neural voices prioritized
 export function getVietnameseVoices(): SpeechSynthesisVoice[] {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
   const voices = window.speechSynthesis.getVoices();
-  return voices.filter(
+  const viVoices = voices.filter(
     (v) =>
       v.lang.toLowerCase().startsWith('vi') ||
       v.name.toLowerCase().includes('vietnam') ||
       v.name.toLowerCase().includes('tiếng việt')
   );
+
+  // Sort natural/neural voices first (e.g. Microsoft HoaiMy Online, Google Tiếng Việt)
+  return viVoices.sort((a, b) => {
+    const aScore = (a.name.includes('Natural') ? 10 : 0) + (a.name.includes('Online') ? 5 : 0) + (a.name.includes('Google') ? 3 : 0);
+    const bScore = (b.name.includes('Natural') ? 10 : 0) + (b.name.includes('Online') ? 5 : 0) + (b.name.includes('Google') ? 3 : 0);
+    return bScore - aScore;
+  });
 }
 
 export function stopSpeaking() {
@@ -219,7 +226,7 @@ function playClientGoogleTTS(text: string, options: SpeakOptions) {
     const streamUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunkText)}`;
     
     const audio = new Audio(streamUrl);
-    audio.playbackRate = activeClientQueue.options.rate ?? 1.12;
+    audio.playbackRate = activeClientQueue.options.rate ?? 1.25;
     activeClientQueue.activeAudio = audio;
     currentAudio = audio;
 
@@ -301,7 +308,7 @@ export async function prefetchSpeech(
     const blobUrl = URL.createObjectURL(blob);
     const audio = new Audio(blobUrl);
     audio.preload = 'auto';
-    audio.playbackRate = options.rate ?? 1.12;
+    audio.playbackRate = options.rate ?? 1.22;
 
     // Load to ensure browser has decoded audio metadata
     audio.load();
@@ -333,7 +340,7 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
   if (audioPreloadCache.has(cacheKey)) {
     const audio = audioPreloadCache.get(cacheKey)!;
     audio.currentTime = 0;
-    audio.playbackRate = options.rate ?? 1.12;
+    audio.playbackRate = options.rate ?? 1.22;
     currentAudio = audio;
 
     let hasStarted = false;
@@ -362,7 +369,7 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
   try {
     const audioUrl = `/api/tts?text=${encodeURIComponent(trimmed)}&voice=${encodeURIComponent(targetVoice)}`;
     const audio = new Audio(audioUrl);
-    audio.playbackRate = options.rate ?? 1.12;
+    audio.playbackRate = options.rate ?? 1.22;
     currentAudio = audio;
 
     let hasStarted = false;
@@ -392,17 +399,17 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
     };
 
     audio.onerror = () => {
-      // Backend /api/tts not found (e.g. static Vercel / Netlify / 404) -> Seamlessly switch to Client Google TTS!
+      // Backend /api/tts error -> Seamlessly switch to Client Google TTS!
       switchToClientTTS();
     };
 
-    // If server takes more than 2.0s (e.g. cold start, timeout, or blocked on static web)
+    // Allow 4.5s for web serverless cold-start before switching to client fallback
     const timeoutId = setTimeout(() => {
       if (!hasStarted && !hasFailed && currentAudio === audio) {
-        console.log('[TTS] Server TTS taking >2s on web, switching immediately to Client Google TTS...');
+        console.log('[TTS] Serverless cold-start taking >4.5s on web, switching to fast client TTS...');
         switchToClientTTS();
       }
-    }, 2000);
+    }, 4500);
 
     const playPromise = audio.play();
     if (playPromise !== undefined) {
@@ -435,21 +442,20 @@ function fallbackWebSpeech(text: string, options: SpeakOptions) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'vi-VN';
 
+  const isMale = options.genderPreference === 'male' || options.genderPreference === 'puck' || options.genderPreference === 'zephyr';
+
   if (viVoices.length > 0) {
-    // Prefer high quality natural Vietnamese voices if available
-    const preferredVoice = viVoices.find(v => 
-      v.name.includes('Natural') || 
-      v.name.includes('Online') || 
-      v.name.includes('Google') || 
-      v.name.includes('Linh') ||
-      v.name.includes('An') ||
-      v.name.includes('Vietnamese')
-    ) || viVoices[0];
-    utterance.voice = preferredVoice;
+    let chosenVoice: SpeechSynthesisVoice | undefined;
+    if (isMale) {
+      chosenVoice = viVoices.find(v => v.name.includes('NamMinh') || v.name.includes('Male') || v.name.includes('Nam'));
+    } else {
+      chosenVoice = viVoices.find(v => v.name.includes('HoaiMy') || v.name.includes('Female') || v.name.includes('Linh') || v.name.includes('Nu'));
+    }
+    utterance.voice = chosenVoice || viVoices[0];
   }
 
-  utterance.rate = options.rate ?? 1.14; // Nhanh nhẹn, sôi nổi
-  utterance.pitch = 1.10; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
+  utterance.rate = options.rate ?? 1.25; // Nhanh nhẹn, sôi nổi, phong cách MC
+  utterance.pitch = 1.12; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
 
   if (options.onStart) utterance.onstart = () => options.onStart?.();
   if (options.onEnd) utterance.onend = () => options.onEnd?.();

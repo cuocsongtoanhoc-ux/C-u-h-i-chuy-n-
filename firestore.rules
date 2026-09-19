@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access unless explicitly granted
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['id', 'title', 'createdAt', 'updatedAt', 'ownerId', 'questions']) &&
+             data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+             data.createdAt is number &&
+             data.updatedAt is number &&
+             data.ownerId is string && data.ownerId.size() <= 128 &&
+             data.ownerId == request.auth.uid &&
+             data.questions is list && data.questions.size() <= 200;
+    }
+
+    // Sessions collection for cloud synchronization
+    match /sessions/{sessionId} {
+      allow get, list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+                    isValidId(sessionId) &&
+                    isValidSession(incoming()) &&
+                    incoming().id == sessionId;
+                    
+      allow update: if isSignedIn() &&
+                    isValidId(sessionId) &&
+                    isValidSession(incoming()) &&
+                    existing().ownerId == request.auth.uid &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().createdAt == existing().createdAt;
+                    
+      allow delete: if isSignedIn() &&
+                    isValidId(sessionId) &&
+                    existing().ownerId == request.auth.uid;
+    }
+  }
+}

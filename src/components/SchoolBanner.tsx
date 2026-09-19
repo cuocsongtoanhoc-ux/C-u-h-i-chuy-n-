@@ -1,4 +1,16 @@
-export default function SchoolBanner({ compact = false }: { compact?: boolean }) {
+import { Maximize2, Minimize2 } from 'lucide-react';
+
+interface SchoolBannerProps {
+  compact?: boolean;
+  onToggleFullscreen?: () => void;
+  isFullScreen?: boolean;
+}
+
+export default function SchoolBanner({ 
+  compact = false,
+  onToggleFullscreen,
+  isFullScreen = false
+}: SchoolBannerProps) {
   if (compact) {
     return (
       <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-sm border border-sky-100">
@@ -20,7 +32,7 @@ export default function SchoolBanner({ compact = false }: { compact?: boolean })
   }
 
   return (
-    <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-r from-sky-500 via-blue-600 to-cyan-600 text-white shadow-xl border-4 border-sky-200/50 p-6 sm:p-8 mb-8">
+    <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-r from-sky-500 via-blue-600 to-cyan-600 text-white shadow-xl border-4 border-sky-200/50 p-6 sm:p-8 mb-6 w-full">
       {/* Decorative background rays & lights */}
       <div className="absolute -right-10 -bottom-10 w-72 h-72 bg-cyan-300/25 rounded-full blur-2xl pointer-events-none" />
       <div className="absolute left-1/4 -top-10 w-60 h-60 bg-sky-200/25 rounded-full blur-3xl pointer-events-none" />
@@ -54,16 +66,30 @@ export default function SchoolBanner({ compact = false }: { compact?: boolean })
           </div>
         </div>
 
-        {/* Right: Architectural Silhouette / Graphic Badge */}
-        <div className="flex items-center gap-4 bg-white/15 backdrop-blur-md px-5 py-3 rounded-2xl border border-white/25 text-center shrink-0">
-          <div className="text-3xl sm:text-4xl">🏫</div>
-          <div className="text-left">
-            <div className="text-xs text-cyan-200 font-bold uppercase tracking-wider">Mô Hình Hoạt Động</div>
-            <div className="text-sm sm:text-base font-black text-white">Toàn Trường & Từng Khối</div>
-            <div className="text-[11px] text-white/90">Khối 10 • Khối 11 • Khối 12</div>
+        {/* Right: Architectural Badge & Fullscreen Toggle */}
+        <div className="flex items-center gap-3 flex-wrap justify-center shrink-0">
+          <div className="flex items-center gap-3.5 bg-white/15 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/25 text-left shrink-0">
+            <div className="text-3xl sm:text-4xl">🏫</div>
+            <div>
+              <div className="text-xs text-cyan-200 font-bold uppercase tracking-wider">Mô Hình Hoạt Động</div>
+              <div className="text-sm sm:text-base font-black text-white">Toàn Trường & Từng Khối</div>
+              <div className="text-[11px] text-white/90">Khối 10 • Khối 11 • Khối 12</div>
+            </div>
           </div>
+
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="px-4 py-3 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black rounded-2xl text-xs sm:text-sm transition flex items-center gap-2 shadow-lg shadow-amber-900/30 active:scale-95 whitespace-nowrap"
+              title={isFullScreen ? 'Thu nhỏ cửa sổ (F11)' : 'Bật Toàn Màn Hình để hình ảnh tràn đầy toàn bộ máy chiếu / màn hình'}
+            >
+              {isFullScreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              <span>{isFullScreen ? 'Thu Nhỏ Màn Hình' : 'Toàn Màn Hình (F11)'}</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
+

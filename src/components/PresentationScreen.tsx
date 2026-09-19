@@ -14,6 +14,7 @@ import LuckyBalls from './animations/LuckyBalls';
 import SlotMachine from './animations/SlotMachine';
 import RocketRace from './animations/RocketRace';
 import MysteryChest from './animations/MysteryChest';
+import FlyingAvatars from './animations/FlyingAvatars';
 import SchoolBanner from './SchoolBanner';
 import { 
   ArrowLeft, 
@@ -106,7 +107,13 @@ export default function PresentationScreen({
   const [currentVoicePref, setCurrentVoicePref] = useState<VoiceGenderPreference>(voicePreference);
   const [isMuted, setIsMutedState] = useState(getSoundMuted());
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [autoSpeakQuestion, setAutoSpeakQuestion] = useState(true);
+  // Disabled by default when on web per teacher's request ("Khi đưa lên web thì giọng Ai không đọc nhé")
+  const [autoSpeakQuestion, setAutoSpeakQuestion] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vts_auto_speak_ai') === 'true';
+    }
+    return false;
+  });
 
   // Fullscreen State & Handlers
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -275,15 +282,17 @@ export default function PresentationScreen({
             subtitle: `Chúc mừng ${selectedResult.displayText} đã trả lời đúng phương án ${correctLetter}: "${correctText}"!`,
           });
 
-          const speech = buildMCCelebrationScript(selectedResult.displayText, correctLetter, correctText, currentQIndex);
-          setIsSpeaking(true);
-          speakQuestion(speech, {
-            genderPreference: currentVoicePref,
-            rate: 1.12,
-            onStart: () => setIsSpeaking(true),
-            onEnd: () => setIsSpeaking(false),
-            onError: () => setIsSpeaking(false),
-          });
+          if (autoSpeakQuestion) {
+            const speech = buildMCCelebrationScript(selectedResult.displayText, correctLetter, correctText, currentQIndex);
+            setIsSpeaking(true);
+            speakQuestion(speech, {
+              genderPreference: currentVoicePref,
+              rate: 1.12,
+              onStart: () => setIsSpeaking(true),
+              onEnd: () => setIsSpeaking(false),
+              onError: () => setIsSpeaking(false),
+            });
+          }
         } else {
           // WRONG!
           playWrongAnswerSound();
@@ -296,15 +305,17 @@ export default function PresentationScreen({
             subtitle: `Bạn đã chọn phương án ${chosenLetter}: "${chosenText}". Đáp án đúng là phương án ${correctLetter}: "${correctText}". Bạn đã rất tự tin và cố gắng hết mình!`,
           });
 
-          const speech = buildMCEncouragementScript(selectedResult.displayText, correctLetter, correctText, currentQIndex);
-          setIsSpeaking(true);
-          speakQuestion(speech, {
-            genderPreference: currentVoicePref,
-            rate: 1.10,
-            onStart: () => setIsSpeaking(true),
-            onEnd: () => setIsSpeaking(false),
-            onError: () => setIsSpeaking(false),
-          });
+          if (autoSpeakQuestion) {
+            const speech = buildMCEncouragementScript(selectedResult.displayText, correctLetter, correctText, currentQIndex);
+            setIsSpeaking(true);
+            speakQuestion(speech, {
+              genderPreference: currentVoicePref,
+              rate: 1.10,
+              onStart: () => setIsSpeaking(true),
+              onEnd: () => setIsSpeaking(false),
+              onError: () => setIsSpeaking(false),
+            });
+          }
         }
       } else {
         // Direct reveal when student didn't click
@@ -317,15 +328,17 @@ export default function PresentationScreen({
           subtitle: correctText,
         });
 
-        const speech = `Và đáp án chính xác cho câu hỏi này là phương án ${correctLetter}: ${correctText}!`;
-        setIsSpeaking(true);
-        speakQuestion(speech, {
-          genderPreference: currentVoicePref,
-          rate: 1.12,
-          onStart: () => setIsSpeaking(true),
-          onEnd: () => setIsSpeaking(false),
-          onError: () => setIsSpeaking(false),
-        });
+        if (autoSpeakQuestion) {
+          const speech = `Và đáp án chính xác cho câu hỏi này là phương án ${correctLetter}: ${correctText}!`;
+          setIsSpeaking(true);
+          speakQuestion(speech, {
+            genderPreference: currentVoicePref,
+            rate: 1.12,
+            onStart: () => setIsSpeaking(true),
+            onEnd: () => setIsSpeaking(false),
+            onError: () => setIsSpeaking(false),
+          });
+        }
       }
     }, 2400);
   };
@@ -416,6 +429,30 @@ export default function PresentationScreen({
 
         {/* Center / Right controls */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* AI Voice Toggle Button (Default is OFF per user request) */}
+          <button
+            onClick={() => {
+              const next = !autoSpeakQuestion;
+              setAutoSpeakQuestion(next);
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('vts_auto_speak_ai', next ? 'true' : 'false');
+              }
+              if (!next) {
+                stopSpeaking();
+                setIsSpeaking(false);
+              }
+            }}
+            className={`px-3 py-2 rounded-2xl transition flex items-center gap-1.5 border text-xs font-bold shadow-xs ${
+              autoSpeakQuestion
+                ? 'bg-purple-600 text-white border-purple-700 hover:bg-purple-700 shadow-purple-200'
+                : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+            }`}
+            title={autoSpeakQuestion ? 'Giọng đọc AI: Đang Bật (Bấm để Tắt)' : 'Giọng đọc AI: Đang Tắt (Bấm để Bật nếu muốn)'}
+          >
+            {autoSpeakQuestion ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            <span className="hidden sm:inline">{autoSpeakQuestion ? 'Giọng AI: BẬT' : 'Giọng AI: TẮT'}</span>
+          </button>
+
           {/* Fullscreen Toggle Button */}
           <button
             onClick={toggleFullScreen}
@@ -450,8 +487,8 @@ export default function PresentationScreen({
         </div>
       </header>
 
-      {/* Main Presentation Stage */}
-      <main className="flex-1 flex flex-col items-center justify-center p-3 sm:p-6 lg:p-8 relative max-w-7xl w-full mx-auto">
+      {/* Main Presentation Stage - Fullscreen Responsive Scale */}
+      <main className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 lg:p-6 relative w-full max-w-[1700px] mx-auto">
         <AnimatePresence mode="wait">
           {/* STATE 1: IDLE - GAME SELECTION SCREEN (CHOOSE 1 OF 5 GAMES) */}
           {screenState === 'IDLE' && (
@@ -460,7 +497,7 @@ export default function PresentationScreen({
               initial={{ opacity: 0, scale: 0.92 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, y: -40 }}
-              className="text-center bg-white/90 backdrop-blur-2xl p-6 sm:p-10 rounded-[3rem] shadow-2xl border border-sky-100 max-w-4xl w-full"
+              className="text-center bg-white/90 backdrop-blur-2xl p-6 sm:p-10 rounded-[3rem] shadow-2xl border border-sky-100 max-w-5xl lg:max-w-6xl w-full"
             >
               <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full bg-sky-100 text-sky-800 font-extrabold text-xs uppercase tracking-wider mb-2 border border-sky-200">
                 <span>🏫</span> TRƯỜNG THPT VÕ THỊ SÁU
@@ -469,10 +506,10 @@ export default function PresentationScreen({
                 Câu Hỏi Số {currentQIndex + 1}
               </h2>
               <p className="text-base sm:text-lg text-slate-600 mb-8 font-semibold">
-                Chọn một trong 5 trò chơi để tìm ra lớp và học sinh may mắn trả lời:
+                Chọn một trong 6 trò chơi để tìm ra lớp và học sinh may mắn trả lời:
               </p>
 
-              {/* 5 Minigames Grid */}
+              {/* 6 Minigames Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 mb-8">
                 {/* 1. Vòng quay kỳ diệu */}
                 <button
@@ -525,12 +562,29 @@ export default function PresentationScreen({
                 {/* 5. Rương Kho Báu Bí Ẩn */}
                 <button
                   onClick={() => startMinigame('CHEST')}
-                  className="p-5 rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-left transition transform hover:scale-[1.03] active:scale-[0.98] shadow-lg shadow-emerald-300/50 flex flex-col justify-between h-36 sm:col-span-2 lg:col-span-1"
+                  className="p-5 rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-left transition transform hover:scale-[1.03] active:scale-[0.98] shadow-lg shadow-emerald-300/50 flex flex-col justify-between h-36"
                 >
                   <div className="text-3xl">🎁</div>
                   <div>
                     <div className="text-xl font-black">Rương Báu Tri Thức</div>
                     <div className="text-xs text-emerald-100 font-medium mt-0.5">Chọn rương phát sáng mở ra người may mắn</div>
+                  </div>
+                </button>
+
+                {/* 6. Biệt Đội Avatar Bay Lượn */}
+                <button
+                  onClick={() => startMinigame('FLYING_AVATARS')}
+                  className="p-5 rounded-3xl bg-gradient-to-br from-indigo-500 via-sky-600 to-cyan-500 hover:from-indigo-600 hover:via-sky-700 hover:to-cyan-600 text-white font-extrabold text-left transition transform hover:scale-[1.03] active:scale-[0.98] shadow-lg shadow-sky-300/50 flex flex-col justify-between h-36 border-2 border-yellow-300/40 relative overflow-hidden"
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="text-3xl animate-bounce">🛸</div>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[10px] font-black uppercase shadow-xs">
+                      Mới 🔥
+                    </span>
+                  </div>
+                  <div>
+                    <div className="text-xl font-black">Avatar Bay Lượn</div>
+                    <div className="text-xs text-sky-100 font-medium mt-0.5">Avatar bay ngẫu nhiên kèm âm thanh cartoon vui nhộn</div>
                   </div>
                 </button>
               </div>
@@ -606,6 +660,12 @@ export default function PresentationScreen({
                       ? `STT ${selectedResult.stt < 10 ? '0' + selectedResult.stt : selectedResult.stt}`
                       : 'Học sinh may mắn')
                   }
+                  onComplete={handleMinigameEnd}
+                />
+              )}
+              {activeGame === 'FLYING_AVATARS' && (
+                <FlyingAvatars
+                  targetName={selectedResult.displayText}
                   onComplete={handleMinigameEnd}
                 />
               )}

@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "session": {
+      "title": "ThematicSession",
+      "description": "A thematic quiz session containing questions and classroom presentation configuration",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique session ID",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the thematic session",
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description of the session",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last update timestamp in milliseconds"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the teacher who created the session",
+          "maxLength": 128
+        },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Email of the session owner",
+          "maxLength": 128
+        },
+        "questions": {
+          "type": "array",
+          "description": "Array of quiz questions"
+        },
+        "selectionMode": {
+          "type": "string",
+          "description": "Student selection mode ('class_stt' or 'named_students')",
+          "maxLength": 64
+        },
+        "classConfig": {
+          "type": "object",
+          "description": "Class configuration options"
+        },
+        "voicePref": {
+          "type": "string",
+          "description": "Voice MC preference for the session",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "title", "createdAt", "updatedAt", "ownerId", "questions"]
+    }
+  },
+  "firestore": {
+    "/sessions/{sessionId}": {
+      "schema": "session",
+      "description": "Synchronized thematic quiz sessions created by teachers"
+    }
+  }
+}

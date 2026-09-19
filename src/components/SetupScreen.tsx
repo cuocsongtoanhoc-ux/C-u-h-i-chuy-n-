@@ -30,13 +30,21 @@ import {
   Trash2,
   PlusCircle,
   CheckCircle,
-  FileEdit
+  FileEdit,
+  Cloud,
+  CloudUpload,
+  CloudDownload
 } from 'lucide-react';
 import SchoolBanner from './SchoolBanner';
 import SavedSessionsModal from './SavedSessionsModal';
 import SaveSessionDialog from './SaveSessionDialog';
 import AIQuestionNormalizer from './AIQuestionNormalizer';
-import { getSavedSessions, saveOrUpdateSession } from '../utils/sessionStorage';
+import { 
+  getSavedSessions, 
+  saveOrUpdateSession,
+  pushSessionsToCloud,
+  pullSessionsFromCloud
+} from '../utils/sessionStorage';
 import { parseFlexibleQuestions, formatQuestionsToManualText } from '../utils/questionParser';
 import { VoiceGenderPreference, speakQuestion, stopSpeaking, prefetchSpeech, buildMCQuestionScript } from '../utils/speechHelper';
 import { playWinnerFanfare, playTick, playCorrectAnswerSound } from '../utils/soundFx';
@@ -73,6 +81,62 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isSaveNewModalOpen, setIsSaveNewModalOpen] = useState(false);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+
+  // Fullscreen state & listener for SetupScreen
+  const [isFullScreen, setIsFullScreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullScreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle:', err);
+    }
+  };
+
+  // AI Voice speech toggle - Default false when deployed to web per user request ("Khi đưa lên web thì giọng Ai không đọc nhé")
+  const [enableAiVoice, setEnableAiVoice] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vts_auto_speak_ai') === 'true';
+    }
+    return false;
+  });
+
+  // Auto-pull from Cloud when loading app so sessions created on other computers are available immediately
+  useEffect(() => {
+    pullSessionsFromCloud().then((res) => {
+      if (res.success && res.sessions.length > 0) {
+        setSavedSessions(res.sessions);
+        setActiveSession((current) => {
+          if (!current) {
+            const first = res.sessions[0];
+            if (first.questions?.length > 0) {
+              setQuestions(first.questions);
+              setManualText(formatQuestionsToManualText(first.questions));
+            }
+            return first;
+          }
+          return current;
+        });
+      }
+    }).catch((e) => {
+      console.warn('Initial cloud sync notice:', e);
+    });
+  }, []);
 
   // Tab for Questions: Normalize (AI) vs Manual vs AI Prompt
   const [isQuestionsExpanded, setIsQuestionsExpanded] = useState(true);
@@ -201,7 +265,10 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
     const updated = saveOrUpdateSession(newSess);
     setSavedSessions(updated);
     setActiveSession(newSess);
-    setSessionToast(`Đã lưu thành công chuyên đề: "${title}"`);
+    setSessionToast(`Đã lưu thành công chuyên đề: "${title}" (Đang đồng bộ đám mây...)`);
+    pushSessionsToCloud(updated).then(() => {
+      setSessionToast(`Đã lưu & đồng bộ chuyên đề "${title}" lên đám mây thành công!`);
+    }).catch(() => {});
     setTimeout(() => setSessionToast(null), 3500);
   };
 
@@ -230,8 +297,36 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
     const updated = saveOrUpdateSession(updatedSession);
     setSavedSessions(updated);
     setActiveSession(updatedSession);
-    setSessionToast(`Đã cập nhật câu hỏi và cài đặt cho chuyên đề: "${activeSession.title}"`);
+    setSessionToast(`Đã cập nhật chuyên đề: "${activeSession.title}" (Đang đồng bộ đám mây...)`);
+    pushSessionsToCloud(updated).then(() => {
+      setSessionToast(`Đã lưu thay đổi & đồng bộ chuyên đề "${activeSession.title}" lên đám mây!`);
+    }).catch(() => {});
     setTimeout(() => setSessionToast(null), 3500);
+  };
+
+  // Quick manual trigger for cloud sync
+  const handleQuickCloudSync = async () => {
+    setIsCloudSyncing(true);
+    setSessionToast('Đang kết nối đám mây để đồng bộ dữ liệu...');
+    try {
+      const res = await pullSessionsFromCloud();
+      if (res.success && res.sessions.length > 0) {
+        setSavedSessions(res.sessions);
+        setSessionToast(res.message);
+        if (!activeSession) {
+          loadSession(res.sessions[0]);
+        }
+      } else {
+        // Push local sessions to cloud
+        const pushRes = await pushSessionsToCloud(savedSessions);
+        setSessionToast(pushRes.message);
+      }
+    } catch (e: any) {
+      setSessionToast(`Lỗi đồng bộ: ${e.message}`);
+    } finally {
+      setIsCloudSyncing(false);
+      setTimeout(() => setSessionToast(null), 4000);
+    }
   };
 
   // Parse questions from manual textarea with instant visual feedback and audio prefetch
@@ -465,9 +560,12 @@ D. Tây Ninh
   const totalClassesCount = (grade10 ? 11 : 0) + (grade11 ? 11 : 0) + (grade12 ? 12 : 0);
 
   return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-8 py-6">
-      {/* School Header Banner */}
-      <SchoolBanner />
+    <div className="w-full max-w-[1650px] mx-auto p-3 sm:p-6 lg:p-8 py-4 sm:py-6">
+      {/* School Header Banner with Fullscreen Toggle Button */}
+      <SchoolBanner 
+        onToggleFullscreen={toggleFullScreen} 
+        isFullScreen={isFullScreen} 
+      />
 
       {/* Thematic Assembly Session Selector & Management Bar (Lưu & Chọn Buổi Sinh Hoạt) - Refined & Compact */}
       <div className="my-5 bg-white/95 backdrop-blur-md rounded-2xl p-3.5 sm:p-4.5 border border-rose-200/80 shadow-sm hover:shadow-md transition-all flex flex-col gap-3">
@@ -526,6 +624,16 @@ D. Tây Ninh
               title="Mở danh sách các chuyên đề thầy cô đã lưu"
             >
               <FolderOpen size={14} className="text-amber-300" /> <span>Kho Chuyên Đề ({savedSessions.length})</span>
+            </button>
+
+            <button
+              onClick={handleQuickCloudSync}
+              disabled={isCloudSyncing}
+              className="px-3 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+              title="Đồng bộ câu hỏi & chuyên đề với máy tính khác qua Đám Mây"
+            >
+              <Cloud size={14} className={isCloudSyncing ? "animate-spin text-sky-200" : "text-sky-200"} />
+              <span>{isCloudSyncing ? "Đang Đồng Bộ..." : "Đồng Bộ Đám Mây"}</span>
             </button>
           </div>
         </div>
@@ -1224,8 +1332,23 @@ D. Cần Thơ
 
           {/* Start Presentation Button - Vibrant and Celebratory */}
           <div className="mt-6 pt-4 border-t border-slate-100">
-            {/* Fullscreen Option */}
-            <div className="flex items-center justify-center sm:justify-end mb-3 px-1">
+            {/* Fullscreen & AI Voice Options */}
+            <div className="flex flex-wrap items-center justify-center sm:justify-end gap-3 mb-3 px-1">
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm font-bold text-slate-700 hover:text-purple-700 bg-purple-50/80 hover:bg-purple-100/90 px-3.5 py-1.5 rounded-full border border-purple-200 transition">
+                <input
+                  type="checkbox"
+                  checked={enableAiVoice}
+                  onChange={(e) => {
+                    setEnableAiVoice(e.target.checked);
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem('vts_auto_speak_ai', e.target.checked ? 'true' : 'false');
+                    }
+                  }}
+                  className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300 cursor-pointer"
+                />
+                <span>🎙️ Bật giọng đọc AI (Mặc định TẮT khi đưa lên web)</span>
+              </label>
+
               <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm font-bold text-slate-700 hover:text-sky-700 bg-sky-50/80 hover:bg-sky-100/90 px-3.5 py-1.5 rounded-full border border-sky-200 transition">
                 <input
                   type="checkbox"
