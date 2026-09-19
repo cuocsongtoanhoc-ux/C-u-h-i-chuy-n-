@@ -50,7 +50,7 @@ import {
 import { parseFlexibleQuestions, formatQuestionsToManualText } from '../utils/questionParser';
 import { VoiceGenderPreference, speakQuestion, stopSpeaking, prefetchSpeech, buildMCQuestionScript } from '../utils/speechHelper';
 import { playWinnerFanfare, playTick, playCorrectAnswerSound } from '../utils/soundFx';
-import { auth, signOutUser } from '../lib/firebase';
+import { auth, signOutUser, subscribeToUserSessions, ensureAuthUser } from '../lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 
 interface SetupScreenProps {
@@ -151,26 +151,69 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
     return true;
   });
 
-  // Auto-pull from Cloud when loading app so sessions created on other computers are available immediately
+  // Real-time synchronization across all computers and auto-pull on mount
   useEffect(() => {
-    pullSessionsFromCloud().then((res) => {
-      if (res.success && res.sessions.length > 0) {
-        setSavedSessions(res.sessions);
-        setActiveSession((current) => {
-          if (!current) {
-            const first = res.sessions[0];
-            if (first.questions?.length > 0) {
-              setQuestions(first.questions);
-              setManualText(formatQuestionsToManualText(first.questions));
+    let isMounted = true;
+
+    // 1. Initial pull on startup to sync from Cloud Firestore immediately
+    const performInitialSync = async () => {
+      try {
+        await ensureAuthUser();
+        const res = await pullSessionsFromCloud();
+        if (isMounted && res.success && res.sessions.length > 0) {
+          setSavedSessions(res.sessions);
+          setActiveSession((current) => {
+            if (!current) {
+              const first = res.sessions[0];
+              if (first.questions?.length > 0) {
+                setQuestions(first.questions);
+                setManualText(formatQuestionsToManualText(first.questions));
+              }
+              return first;
             }
-            return first;
-          }
-          return current;
-        });
+            return current;
+          });
+        }
+      } catch (e) {
+        console.warn('Initial cloud sync notice:', e);
       }
-    }).catch((e) => {
-      console.warn('Initial cloud sync notice:', e);
-    });
+    };
+    performInitialSync();
+
+    // 2. Real-time subscription: when another computer creates/updates a session, this computer receives it instantly!
+    let unsubSnapshot: (() => void) | null = null;
+    try {
+      unsubSnapshot = subscribeToUserSessions(
+        auth.currentUser,
+        (cloudSessions) => {
+          if (!isMounted || cloudSessions.length === 0) return;
+          setSavedSessions(cloudSessions);
+          setActiveSession((current) => {
+            if (!current) {
+              const first = cloudSessions[0];
+              if (first.questions?.length > 0) {
+                setQuestions(first.questions);
+                setManualText(formatQuestionsToManualText(first.questions));
+              }
+              return first;
+            }
+            // Update current active session with latest cloud version if present
+            const matched = cloudSessions.find((s) => s.id === current.id);
+            return matched || current;
+          });
+        },
+        (err) => {
+          console.warn('Realtime subscription notice:', err);
+        }
+      );
+    } catch (err) {
+      console.warn('Realtime sync setup notice:', err);
+    }
+
+    return () => {
+      isMounted = false;
+      if (unsubSnapshot) unsubSnapshot();
+    };
   }, []);
 
   // Tab for Questions: Normalize (AI) vs Manual vs AI Prompt

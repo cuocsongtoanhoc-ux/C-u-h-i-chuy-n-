@@ -7,21 +7,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
       return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
     }
 
     function isValidSession(data) {
@@ -31,28 +22,24 @@ service cloud.firestore {
              data.createdAt is number &&
              data.updatedAt is number &&
              data.ownerId is string && data.ownerId.size() <= 128 &&
-             data.ownerId == request.auth.uid &&
              data.questions is list && data.questions.size() <= 200;
     }
 
-    // Sessions collection for cloud synchronization
+    // Sessions collection for school-wide synchronization across all computers
     match /sessions/{sessionId} {
-      allow get, list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || resource.data.ownerEmail == request.auth.token.email);
+      // Anyone with the app link can read the shared sessions so all school computers sync immediately
+      allow get, list: if true;
       
-      allow create: if isSignedIn() &&
-                    isValidId(sessionId) &&
+      // Allow create and update if session payload is structurally valid
+      allow create: if isValidId(sessionId) &&
                     isValidSession(incoming()) &&
                     incoming().id == sessionId;
                     
-      allow update: if isSignedIn() &&
-                    isValidId(sessionId) &&
+      allow update: if isValidId(sessionId) &&
                     isValidSession(incoming()) &&
-                    incoming().id == sessionId &&
-                    (existing().ownerId == request.auth.uid || existing().ownerEmail == request.auth.token.email);
+                    incoming().id == sessionId;
                     
-      allow delete: if isSignedIn() &&
-                    isValidId(sessionId) &&
-                    (existing().ownerId == request.auth.uid || existing().ownerEmail == request.auth.token.email);
+      allow delete: if request.auth != null;
     }
   }
 }

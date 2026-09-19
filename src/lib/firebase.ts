@@ -3,6 +3,7 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInAnonymously,
   signOut as fbSignOut, 
   onAuthStateChanged, 
   User 
@@ -27,6 +28,20 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+// Automatically ensure auth state (anonymously if not signed in) so Firestore works across all computers without login
+export async function ensureAuthUser(): Promise<User | null> {
+  if (auth.currentUser) return auth.currentUser;
+  try {
+    const cred = await signInAnonymously(auth);
+    return cred.user;
+  } catch (err) {
+    console.warn('Anonymous auth notice:', err);
+    return null;
+  }
+}
+// Trigger silent initial auth
+ensureAuthUser().catch(() => {});
 
 // Error Handling according to Firebase Skill standard
 export enum OperationType {
@@ -79,17 +94,20 @@ export async function testFirestoreConnection() {
 testFirestoreConnection();
 
 // Cloud Session CRUD Operations
-export async function saveSessionToCloud(session: SavedSession, user: User): Promise<void> {
+export async function saveSessionToCloud(session: SavedSession, user?: User | null): Promise<void> {
   const sessionDocPath = `sessions/${session.id}`;
   try {
+    const effectiveOwnerId = user?.uid || auth.currentUser?.uid || 'school_teacher';
+    const effectiveEmail = user?.email || auth.currentUser?.email || '';
+
     const dataToSave = {
       id: session.id,
       title: (session.title || 'Chuyên đề không tên').trim().slice(0, 300),
       description: (session.description || '').slice(0, 1000),
       createdAt: typeof session.createdAt === 'number' && !isNaN(session.createdAt) ? session.createdAt : Date.now(),
       updatedAt: Date.now(),
-      ownerId: user.uid,
-      ownerEmail: user.email || '',
+      ownerId: effectiveOwnerId,
+      ownerEmail: effectiveEmail,
       questions: Array.isArray(session.questions) ? session.questions.slice(0, 200) : [],
       selectionMode: session.selectionMode || 'class_stt',
       classConfig: session.classConfig || { grade10: true, grade11: true, grade12: true, maxSTT: 40 },
@@ -112,54 +130,47 @@ export async function deleteSessionFromCloud(sessionId: string): Promise<void> {
   }
 }
 
-export async function fetchUserSessionsFromCloud(user: User): Promise<SavedSession[]> {
+/**
+ * Fetches all school sessions from Cloud Firestore.
+ * If user is authenticated, also checks user specific ownership, but queries all sessions by default.
+ */
+export async function fetchAllSessionsFromCloud(): Promise<SavedSession[]> {
   const pathForGetDocs = 'sessions';
   try {
-    const q = query(
-      collection(db, pathForGetDocs),
-      where('ownerId', '==', user.uid)
-    );
-    const snapshot = await getDocs(q);
+    const snapshot = await getDocs(collection(db, pathForGetDocs));
     const sessions: SavedSession[] = [];
     snapshot.forEach((d) => {
-      sessions.push(d.data() as SavedSession);
+      const data = d.data();
+      if (data && data.id && data.title) {
+        sessions.push(data as SavedSession);
+      }
     });
 
-    // If no sessions found by UID and user has email, try querying by ownerEmail
-    if (sessions.length === 0 && user.email) {
-      try {
-        const qEmail = query(
-          collection(db, pathForGetDocs),
-          where('ownerEmail', '==', user.email)
-        );
-        const emailSnap = await getDocs(qEmail);
-        emailSnap.forEach((d) => {
-          sessions.push(d.data() as SavedSession);
-        });
-      } catch (emailErr) {
-        console.debug('Email query fallback notice:', emailErr);
-      }
-    }
-
-    return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+    return sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, pathForGetDocs);
     return [];
   }
 }
 
+export async function fetchUserSessionsFromCloud(user?: User | null): Promise<SavedSession[]> {
+  return fetchAllSessionsFromCloud();
+}
+
 /**
- * Robust Bidirectional Cloud Sync:
- * 1. Pulls all cloud sessions for user
- * 2. Merges with local sessions
- * 3. Uploads any local sessions missing in cloud
- * 4. Saves merged sessions to localStorage
+ * Robust Bidirectional Cloud Sync across all school computers:
+ * 1. Ensures connection to Firestore (with anonymous auth if needed)
+ * 2. Pulls all cloud sessions for school
+ * 3. Merges with local sessions
+ * 4. Uploads any local sessions missing in cloud or newer
+ * 5. Saves merged sessions to localStorage
  */
 export async function syncUserDataWithCloud(
-  user: User,
-  localSessions: SavedSession[]
+  user?: User | null,
+  localSessions: SavedSession[] = []
 ): Promise<{ merged: SavedSession[]; uploadedCount: number; downloadedCount: number }> {
-  const cloudSessions = await fetchUserSessionsFromCloud(user);
+  await ensureAuthUser();
+  const cloudSessions = await fetchAllSessionsFromCloud();
   const cloudMap = new Map<string, SavedSession>();
   cloudSessions.forEach(s => cloudMap.set(s.id, s));
 
@@ -181,7 +192,7 @@ export async function syncUserDataWithCloud(
       } catch (err) {
         console.warn('Failed to upload local session to cloud:', localSess.title, err);
       }
-    } else if (localSess.updatedAt > cloudSess.updatedAt) {
+    } else if ((localSess.updatedAt || 0) > (cloudSess.updatedAt || 0)) {
       // Local is newer -> update cloud
       try {
         await saveSessionToCloud(localSess, user);
@@ -196,36 +207,36 @@ export async function syncUserDataWithCloud(
   // 2. Any session in cloud but missing locally or cloud is newer
   for (const cloudSess of cloudSessions) {
     const localSess = localMap.get(cloudSess.id);
-    if (!localSess || cloudSess.updatedAt > localSess.updatedAt) {
+    if (!localSess || (cloudSess.updatedAt || 0) > (localSess.updatedAt || 0)) {
       localMap.set(cloudSess.id, cloudSess);
       downloadedCount++;
     }
   }
 
-  const merged = Array.from(localMap.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  const merged = Array.from(localMap.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   return { merged, uploadedCount, downloadedCount };
 }
 
-// Real-time listener for cloud sessions
+// Real-time listener for school cloud sessions
 export function subscribeToUserSessions(
-  user: User,
+  user: User | null,
   onUpdate: (sessions: SavedSession[]) => void,
   onError?: (err: any) => void
 ): () => void {
   const pathForListen = 'sessions';
-  const q = query(
-    collection(db, pathForListen),
-    where('ownerId', '==', user.uid)
-  );
+  const q = collection(db, pathForListen);
 
   return onSnapshot(
     q,
     (snapshot) => {
       const sessions: SavedSession[] = [];
       snapshot.forEach((d) => {
-        sessions.push(d.data() as SavedSession);
+        const data = d.data();
+        if (data && data.id && data.title) {
+          sessions.push(data as SavedSession);
+        }
       });
-      sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+      sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       onUpdate(sessions);
     },
     (error) => {
