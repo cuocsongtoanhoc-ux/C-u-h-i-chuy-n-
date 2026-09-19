@@ -1,0 +1,6 @@
+{
+  "name": "Trình chiếu câu hỏi tương tác",
+  "description": "Hệ thống trình chiếu sinh hoạt chuyên đề Trường THPT Võ Thị Sáu với 5 minigame chọn học sinh, tích chọn khối lớp, âm thanh gameshow và giọng AI đọc Tiếng Việt chuẩn.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
