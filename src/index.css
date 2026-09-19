@@ -1,1 +1,20 @@
 @import "tailwindcss";
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  /* GPU acceleration for interactive UI components & smooth transforms */
+  button, select, input, textarea {
+    touch-action: manipulation;
+  }
+}

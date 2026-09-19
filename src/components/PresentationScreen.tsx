@@ -104,7 +104,13 @@ export default function PresentationScreen({
   const [resultBanner, setResultBanner] = useState<ResultBannerState | null>(null);
 
   // Sound and Voice States
-  const [currentVoicePref, setCurrentVoicePref] = useState<VoiceGenderPreference>(voicePreference);
+  const [currentVoicePref, setCurrentVoicePref] = useState<VoiceGenderPreference>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('vts_voice_preference');
+      if (stored) return stored as VoiceGenderPreference;
+    }
+    return voicePreference || 'aoede';
+  });
   const [isMuted, setIsMutedState] = useState(getSoundMuted());
   const [isSpeaking, setIsSpeaking] = useState(false);
   // Enabled by default so questions are read aloud with energetic MC voice automatically
@@ -749,7 +755,11 @@ export default function PresentationScreen({
                       value={currentVoicePref}
                       onChange={(e) => {
                         stopSpeaking();
-                        setCurrentVoicePref(e.target.value as VoiceGenderPreference);
+                        const newVoice = e.target.value as VoiceGenderPreference;
+                        setCurrentVoicePref(newVoice);
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('vts_voice_preference', newVoice);
+                        }
                       }}
                       className="px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 transition cursor-pointer focus:outline-none"
                       title="Chọn giọng đọc MC chương trình"

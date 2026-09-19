@@ -53,14 +53,14 @@ export default function SchoolBanner({
             </div>
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-xs font-black tracking-wider uppercase mb-1 border border-white/30">
               <span>🏫</span> TRƯỜNG THPT VÕ THỊ SÁU
             </div>
-            <h1 className="text-2xl sm:text-4xl font-black text-white tracking-wide uppercase drop-shadow-md">
+            <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white tracking-wide uppercase drop-shadow-md whitespace-normal lg:whitespace-nowrap">
               HỆ THỐNG TRÌNH CHIẾU SINH HOẠT CHUYÊN ĐỀ
             </h1>
-            <p className="text-sky-100 text-sm sm:text-base font-medium mt-1">
+            <p className="text-sky-100 text-xs sm:text-sm md:text-base font-medium mt-1">
               Vòng Quay May Mắn • Quả Cầu VTS • Đố Vui Có Thưởng • Sôi Động & Hào Hứng
             </p>
           </div>

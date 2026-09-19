@@ -181,6 +181,8 @@ export default function WheelOfFortune({
           animate={{ rotate: rotation }}
           transition={{ duration: 5.0, ease: [0.12, 0.88, 0.18, 1] }}
           style={{
+            willChange: 'transform',
+            transform: 'translateZ(0)',
             background: `conic-gradient(${segments.map((_, idx) => `${COLORS[idx % COLORS.length]} ${idx * sliceAngle}deg ${(idx + 1) * sliceAngle}deg`).join(', ')})`
           }}
         >

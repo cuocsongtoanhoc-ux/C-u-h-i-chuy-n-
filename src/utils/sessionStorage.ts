@@ -155,6 +155,8 @@ export function setLastSyncTime(ts: number = Date.now()): void {
 
 /**
  * Pushes all saved sessions to Cloud Firestore and the server backup.
+ * DUAL-SYNC ARCHITECTURE: Always saves to BOTH Firestore (for persistent account storage)
+ * and the Server Backup API (so other computers can immediately load even before signing in).
  */
 export async function pushSessionsToCloud(
   customSessions?: SavedSession[],
@@ -164,6 +166,8 @@ export async function pushSessionsToCloud(
   const syncKey = (customKey || getStoredSyncKey() || DEFAULT_TEACHER_KEY).trim().toLowerCase();
 
   let firestoreSaved = 0;
+  let firestoreSuccess = false;
+  let serverSuccess = false;
 
   // 1. If Firebase Auth is signed in, sync directly to Firestore with full bidirectional sync
   try {
@@ -171,18 +175,13 @@ export async function pushSessionsToCloud(
     if (auth.currentUser) {
       const { merged, uploadedCount } = await syncUserDataWithCloud(auth.currentUser, sessionsToPush);
       firestoreSaved = uploadedCount;
-      setLastSyncTime(Date.now());
-      return {
-        success: true,
-        count: merged.length,
-        message: `Đã đồng bộ ${merged.length} chuyên đề lên Đám Mây Firestore cho tài khoản ${auth.currentUser.email || 'của bạn'}!`,
-      };
+      firestoreSuccess = true;
     }
   } catch (err) {
     console.warn('Firestore sync notice (continuing with server backup):', err);
   }
 
-  // 2. Also push to server-side backup for universal cross-device access
+  // 2. ALWAYS also push to server-side backup for universal cross-device access across all machines
   try {
     const response = await fetch('/api/cloud-sync/save', {
       method: 'POST',
@@ -195,30 +194,25 @@ export async function pushSessionsToCloud(
     });
 
     if (response.ok) {
-      setLastSyncTime(Date.now());
-      return {
-        success: true,
-        count: sessionsToPush.length,
-        message: `Đã chuyển thành công ${sessionsToPush.length} chuyên đề lên đám mây (Mã: ${syncKey})!`,
-      };
+      serverSuccess = true;
     }
   } catch (err: any) {
     console.error('Server sync error:', err);
   }
 
-  if (firestoreSaved > 0) {
+  if (firestoreSuccess || serverSuccess) {
     setLastSyncTime(Date.now());
     return {
       success: true,
-      count: firestoreSaved,
-      message: `Đã lưu ${firestoreSaved} chuyên đề vào Firestore đám mây!`,
+      count: sessionsToPush.length,
+      message: `Đã đồng bộ thành công ${sessionsToPush.length} chuyên đề lên đám mây (mọi máy tính đều có thể tải về)!`,
     };
   }
 
   return {
     success: false,
     count: 0,
-    message: 'Chưa đăng nhập Google hoặc không có kết nối đám mây. Hãy bấm "Đăng nhập Google" để đồng bộ mọi máy tính!',
+    message: 'Chưa có kết nối đám mây. Hãy kiểm tra kết nối mạng hoặc bấm "Đăng nhập Google"!',
   };
 }
 
@@ -230,32 +224,32 @@ export async function pullSessionsFromCloud(
 ): Promise<{ success: boolean; sessions: SavedSession[]; count: number; message: string }> {
   const syncKey = (customKey || getStoredSyncKey() || DEFAULT_TEACHER_KEY).trim().toLowerCase();
   let cloudSessions: SavedSession[] = [];
+  let source = '';
 
   // 1. Try Firestore if user is authenticated with bidirectional sync
   try {
     const { auth, syncUserDataWithCloud } = await import('../lib/firebase');
     if (auth.currentUser) {
       const local = getSavedSessions();
-      const { merged, downloadedCount } = await syncUserDataWithCloud(auth.currentUser, local);
+      const { merged } = await syncUserDataWithCloud(auth.currentUser, local);
       if (merged.length > 0) {
-        setLastSyncTime(Date.now());
-        return {
-          success: true,
-          sessions: merged,
-          count: merged.length,
-          message: `Đã tải và đồng bộ ${merged.length} chuyên đề từ Firestore Đám Mây (${auth.currentUser.email})!`,
-        };
+        cloudSessions = merged;
+        source = `Firestore (${auth.currentUser.email})`;
       }
     }
   } catch (err) {
     console.warn('Firestore pull notice:', err);
   }
 
-  // 2. Try Server Backup if Firestore yielded nothing or user is on another PC without sign-in
+  // 2. Also try Server Backup if Firestore yielded 0 sessions or user is not signed in
   if (cloudSessions.length === 0) {
     try {
       // First try specific key
       let res = await fetch(`/api/cloud-sync/load/${encodeURIComponent(syncKey)}`);
+      if (!res.ok && syncKey !== DEFAULT_TEACHER_KEY) {
+        // Fallback to teacher key
+        res = await fetch(`/api/cloud-sync/load/${encodeURIComponent(DEFAULT_TEACHER_KEY)}`);
+      }
       if (!res.ok) {
         // Fallback to latest session uploaded across school
         res = await fetch('/api/cloud-sync/latest');
@@ -263,8 +257,9 @@ export async function pullSessionsFromCloud(
 
       if (res.ok) {
         const data = await res.json();
-        if (data && Array.isArray(data.sessions)) {
+        if (data && Array.isArray(data.sessions) && data.sessions.length > 0) {
           cloudSessions = data.sessions;
+          source = `Đám Mây Máy Chủ (${syncKey})`;
         }
       }
     } catch (err) {
@@ -304,8 +299,8 @@ export async function pullSessionsFromCloud(
   return {
     success: true,
     sessions: merged,
-    count: cloudSessions.length,
-    message: `Đã đồng bộ thành công ${cloudSessions.length} chuyên đề từ đám mây về máy tính này!`,
+    count: merged.length,
+    message: `Đã đồng bộ thành công ${merged.length} chuyên đề từ ${source} về máy tính này!`,
   };
 }
 

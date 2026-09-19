@@ -26,7 +26,13 @@ export default function App() {
     maxSTT: 40,
   });
   const [customStudents, setCustomStudents] = useState<StudentItem[]>([]);
-  const [voicePreference, setVoicePreference] = useState<VoiceGenderPreference>('alternate');
+  const [voicePreference, setVoicePreference] = useState<VoiceGenderPreference>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('vts_voice_preference');
+      if (stored) return stored as VoiceGenderPreference;
+    }
+    return 'aoede';
+  });
   const [mode, setMode] = useState<'setup' | 'presentation'>('setup');
   
   return (

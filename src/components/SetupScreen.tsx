@@ -384,11 +384,18 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
     setTimeout(() => setSessionToast(null), 3500);
   };
 
-  // Quick manual trigger for cloud sync
+  // Quick manual trigger for cloud sync: Bi-directional synchronization
   const handleQuickCloudSync = async () => {
     setIsCloudSyncing(true);
     setSessionToast('Đang kết nối đám mây để đồng bộ dữ liệu...');
     try {
+      const currentList = getSavedSessions();
+      // If we have local sessions, push them first so cloud always has latest local data
+      if (currentList.length > 0) {
+        await pushSessionsToCloud(currentList).catch(() => {});
+      }
+
+      // Then pull all merged sessions from cloud (Firestore or Server)
       const res = await pullSessionsFromCloud();
       if (res.success && res.sessions.length > 0) {
         setSavedSessions(res.sessions);
@@ -396,16 +403,17 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
         if (!activeSession) {
           loadSession(res.sessions[0]);
         }
-      } else {
-        // Push local sessions to cloud
-        const pushRes = await pushSessionsToCloud(savedSessions);
+      } else if (currentList.length > 0) {
+        const pushRes = await pushSessionsToCloud(currentList);
         setSessionToast(pushRes.message);
+      } else {
+        setSessionToast(res.message);
       }
     } catch (e: any) {
-      setSessionToast(`Lỗi đồng bộ: ${e.message}`);
+      setSessionToast(`Lỗi đồng bộ: ${e.message || e}`);
     } finally {
       setIsCloudSyncing(false);
-      setTimeout(() => setSessionToast(null), 4000);
+      setTimeout(() => setSessionToast(null), 4500);
     }
   };
 
