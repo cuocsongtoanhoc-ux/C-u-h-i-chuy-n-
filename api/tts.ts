@@ -89,7 +89,8 @@ async function generateGeminiSpeech(text: string, voiceName = 'Aoede'): Promise<
 // 2. High-fidelity Neural Edge TTS (HoaiMy & NamMinh Neural) - Extremely lively, natural MC intonation, 0 API key required!
 async function generateEdgeSpeech(text: string, voiceName = 'Aoede'): Promise<Buffer | null> {
   try {
-    const isMale = voiceName === 'Puck' || voiceName === 'Zephyr';
+    const isMale = ['puck', 'zephyr', 'male'].includes(voiceName.toLowerCase());
+    // 100% Native Vietnamese Voices: NamMinh (Male MC) and HoaiMy (Female MC)
     const edgeVoice = isMale ? 'vi-VN-NamMinhNeural' : 'vi-VN-HoaiMyNeural';
     const tts = new MsEdgeTTS();
     await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
@@ -203,7 +204,25 @@ export default async function handler(
       return;
     }
 
-    // 1. Primary: High-fidelity Gemini Studio AI TTS (Aoede, Kore, Puck, Zephyr)
+    const isMale = ['puck', 'zephyr', 'male'].includes(voice.toLowerCase());
+
+    // For male voice: Always prioritize NamMinhNeural (100% native Vietnamese Male MC voice, zero English persona)
+    if (isMale) {
+      const edgeAudio = await generateEdgeSpeech(text, voice);
+      if (edgeAudio) {
+        const entry = { buffer: edgeAudio, mimeType: 'audio/mpeg' };
+        ttsAudioCache.set(cacheKey, entry);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+        res.setHeader('Content-Length', edgeAudio.length.toString());
+        res.end(edgeAudio);
+        return;
+      }
+    }
+
+    // 1. High-fidelity Gemini Studio AI TTS (Aoede, Kore, etc.)
     const geminiWav = await generateGeminiSpeech(text, voice);
     if (geminiWav) {
       const entry = { buffer: geminiWav, mimeType: 'audio/wav' };

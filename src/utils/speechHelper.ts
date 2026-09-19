@@ -59,12 +59,12 @@ if (typeof window !== 'undefined') {
 export function getVietnameseVoices(): SpeechSynthesisVoice[] {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
   const voices = window.speechSynthesis.getVoices();
-  const viVoices = voices.filter(
-    (v) =>
-      v.lang.toLowerCase().startsWith('vi') ||
-      v.name.toLowerCase().includes('vietnam') ||
-      v.name.toLowerCase().includes('tiếng việt')
-  );
+  // STRICT: Only voices whose language tag is explicitly Vietnamese (vi, vi-VN, vi_VN)
+  // NEVER match English voices that might contain "Vietnam" in their text/descriptions
+  const viVoices = voices.filter((v) => {
+    const lang = (v.lang || '').toLowerCase().replace('_', '-');
+    return lang === 'vi' || lang.startsWith('vi-');
+  });
 
   // Sort natural/neural voices first (e.g. Microsoft HoaiMy Online, Google Tiếng Việt)
   return viVoices.sort((a, b) => {
@@ -446,32 +446,51 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
 // Fallback to Web Speech API with boosted rate & pitch for maximum clarity and cheerfulness
 function fallbackWebSpeech(text: string, options: SpeakOptions) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    options.onError?.(new Error('TTS not available'));
+    playClientGoogleTTS(text, options);
     return;
   }
 
   const viVoices = getVietnameseVoices();
+  // CRITICAL: If the client OS/browser does not have a native Vietnamese voice installed,
+  // NEVER call window.speechSynthesis.speak() because Windows/Chrome will default to English voices (e.g. Microsoft David)!
+  if (viVoices.length === 0) {
+    console.warn('[TTS] No native Vietnamese voice found in browser. Falling back to guaranteed Vietnamese audio.');
+    playClientGoogleTTS(text, options);
+    return;
+  }
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'vi-VN';
 
   const isMale = options.genderPreference === 'male' || options.genderPreference === 'puck' || options.genderPreference === 'zephyr';
 
-  if (viVoices.length > 0) {
-    let chosenVoice: SpeechSynthesisVoice | undefined;
-    if (isMale) {
-      chosenVoice = viVoices.find(v => v.name.includes('NamMinh') || v.name.includes('Male') || v.name.includes('Nam'));
-    } else {
-      chosenVoice = viVoices.find(v => v.name.includes('HoaiMy') || v.name.includes('Female') || v.name.includes('Linh') || v.name.includes('Nu'));
-    }
-    utterance.voice = chosenVoice || viVoices[0];
+  let chosenVoice: SpeechSynthesisVoice | undefined;
+  if (isMale) {
+    chosenVoice = viVoices.find((v) => {
+      const n = v.name.toLowerCase();
+      return n.includes('namminh') || n.includes('nam') || (n.includes('male') && !n.includes('female'));
+    });
+  } else {
+    chosenVoice = viVoices.find((v) => {
+      const n = v.name.toLowerCase();
+      return n.includes('hoaimy') || n.includes('female') || n.includes('linh') || n.includes('nu');
+    });
   }
 
-  utterance.rate = options.rate ?? 1.25; // Nhanh nhẹn, sôi nổi, phong cách MC
-  utterance.pitch = 1.12; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
+  // Must select strictly from viVoices (which is verified Vietnamese).
+  // If male requested but no male Vietnamese voice exists on this computer, use viVoices[0] (Vietnamese female voice)
+  // NEVER let the browser pick an English male voice!
+  utterance.voice = chosenVoice || viVoices[0];
+
+  utterance.rate = options.rate ?? 1.22; // Nhanh nhẹn, sôi nổi, phong cách MC
+  utterance.pitch = 1.08; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
 
   if (options.onStart) utterance.onstart = () => options.onStart?.();
   if (options.onEnd) utterance.onend = () => options.onEnd?.();
-  if (options.onError) utterance.onerror = (e) => options.onError?.(e);
+  if (options.onError) utterance.onerror = (e) => {
+    // If WebSpeech fails mid-stream, fallback safely to client Google TTS
+    playClientGoogleTTS(text, options);
+  };
 
   currentUtterance = utterance;
   window.speechSynthesis.speak(utterance);
