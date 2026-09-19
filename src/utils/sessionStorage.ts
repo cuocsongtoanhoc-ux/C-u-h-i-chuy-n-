@@ -181,6 +181,8 @@ export async function pushSessionsToCloud(
     console.warn('Firestore sync notice (continuing with server backup):', err);
   }
 
+  let lastErrorDetail = '';
+
   // 2. ALWAYS also push to server-side backup for universal cross-device access across all machines
   try {
     const response = await fetch('/api/cloud-sync/save', {
@@ -195,9 +197,13 @@ export async function pushSessionsToCloud(
 
     if (response.ok) {
       serverSuccess = true;
+    } else {
+      const errJson = await response.json().catch(() => ({}));
+      lastErrorDetail = errJson.error || `HTTP ${response.status}`;
     }
   } catch (err: any) {
     console.error('Server sync error:', err);
+    lastErrorDetail = err?.message || 'Lỗi mạng khi gọi máy chủ';
   }
 
   if (firestoreSuccess || serverSuccess) {
@@ -212,7 +218,9 @@ export async function pushSessionsToCloud(
   return {
     success: false,
     count: 0,
-    message: 'Chưa có kết nối đám mây. Hãy kiểm tra kết nối mạng hoặc bấm "Đăng nhập Google"!',
+    message: lastErrorDetail 
+      ? `Không thể kết nối lưu trữ đám mây (${lastErrorDetail}). Vui lòng thử lại!`
+      : 'Không thể kết nối đám mây. Vui lòng kiểm tra lại kết nối mạng!',
   };
 }
 
