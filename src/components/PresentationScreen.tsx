@@ -27,7 +27,9 @@ import {
   Square,
   Trophy,
   HelpCircle,
-  RotateCcw
+  RotateCcw,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -105,6 +107,47 @@ export default function PresentationScreen({
   const [isMuted, setIsMutedState] = useState(getSoundMuted());
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoSpeakQuestion, setAutoSpeakQuestion] = useState(true);
+
+  // Fullscreen State & Handlers
+  const [isFullScreen, setIsFullScreen] = useState(false);
+
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullScreen(true);
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+          setIsFullScreen(false);
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle notice:', err);
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullScreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'f' || e.key === 'F') {
+        if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          toggleFullScreen();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Compute available classes list based on selected grades
   const getAvailableClassNames = (): string[] => {
@@ -372,9 +415,23 @@ export default function PresentationScreen({
         </div>
 
         {/* Center / Right controls */}
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Fullscreen Toggle Button */}
+          <button
+            onClick={toggleFullScreen}
+            className={`px-3 py-2 rounded-2xl transition flex items-center gap-1.5 border text-xs font-bold shadow-xs ${
+              isFullScreen
+                ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 shadow-amber-200'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-sky-50 hover:text-sky-700 hover:border-sky-300'
+            }`}
+            title={isFullScreen ? 'Thu nhỏ màn hình (phím F hoặc Esc)' : 'Hiển thị toàn màn hình (phím F)'}
+          >
+            {isFullScreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            <span className="hidden sm:inline">{isFullScreen ? 'Thu nhỏ' : 'Toàn màn hình'}</span>
+          </button>
+
           {/* Question Counter Pill */}
-          <div className="px-4 py-1.5 rounded-full bg-gradient-to-r from-sky-600 to-blue-600 text-white font-black text-xs sm:text-sm tracking-wider shadow-sm uppercase">
+          <div className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-sky-600 to-blue-600 text-white font-black text-xs sm:text-sm tracking-wider shadow-sm uppercase">
             Câu {currentQIndex + 1} / {questions.length}
           </div>
 
@@ -394,7 +451,7 @@ export default function PresentationScreen({
       </header>
 
       {/* Main Presentation Stage */}
-      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 relative max-w-6xl w-full mx-auto">
+      <main className="flex-1 flex flex-col items-center justify-center p-3 sm:p-6 lg:p-8 relative max-w-7xl w-full mx-auto">
         <AnimatePresence mode="wait">
           {/* STATE 1: IDLE - GAME SELECTION SCREEN (CHOOSE 1 OF 5 GAMES) */}
           {screenState === 'IDLE' && (
@@ -598,21 +655,21 @@ export default function PresentationScreen({
           {(screenState === 'SHOW_QUESTION' || screenState === 'SHOW_ANSWER') && (
             <motion.div
               key="question_view"
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -30 }}
-              className="w-full max-w-5xl"
+              exit={{ opacity: 0, y: -20 }}
+              className="w-full"
             >
-              {/* Question Banner */}
-              <div className="relative bg-white border-4 border-sky-200/80 rounded-[2.5rem] p-6 sm:p-8 mb-5 shadow-2xl flex flex-col justify-center min-h-[160px]">
+              {/* Question Banner - Expanded and Prominent */}
+              <div className="relative bg-white/95 backdrop-blur-md border-4 border-sky-300 rounded-[2.5rem] p-6 sm:p-9 lg:p-10 mb-6 shadow-2xl flex flex-col justify-center min-h-[170px]">
                 {/* School & Question Tag */}
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-extrabold uppercase border border-sky-200">
-                      THPT Võ Thị Sáu
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-3.5 py-1.5 rounded-full bg-sky-100 text-sky-800 text-xs sm:text-sm font-black uppercase tracking-wide border border-sky-200">
+                      🏫 THPT Võ Thị Sáu
                     </span>
-                    <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-bold">
-                      {selectedResult.displayText}
+                    <span className="px-3.5 py-1.5 rounded-full bg-indigo-100 text-indigo-800 text-xs sm:text-sm font-black border border-indigo-200">
+                      🎯 {selectedResult.displayText}
                     </span>
                   </div>
 
@@ -624,7 +681,7 @@ export default function PresentationScreen({
                         stopSpeaking();
                         setCurrentVoicePref(e.target.value as VoiceGenderPreference);
                       }}
-                      className="px-2.5 py-1.5 rounded-full text-xs font-bold border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 transition cursor-pointer focus:outline-none"
+                      className="px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 transition cursor-pointer focus:outline-none"
                       title="Chọn giọng đọc MC chương trình"
                     >
                       <option value="aoede">🎤 MC Nữ Thanh Thoát</option>
@@ -637,20 +694,20 @@ export default function PresentationScreen({
 
                     <button
                       onClick={triggerSpeak}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                      className={`px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold border transition flex items-center gap-1.5 ${
                         isSpeaking
                           ? 'bg-rose-500 text-white border-rose-600 shadow-md animate-pulse'
-                          : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+                          : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 shadow-xs'
                       }`}
                     >
-                      {isSpeaking ? <Square size={12} fill="currentColor" /> : <Volume2 size={14} />}
+                      {isSpeaking ? <Square size={13} fill="currentColor" /> : <Volume2 size={15} />}
                       <span>{isSpeaking ? 'Dừng đọc' : 'Đọc câu hỏi'}</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Question Text */}
-                <h3 className="text-xl sm:text-3xl font-extrabold text-center leading-relaxed text-slate-900 px-2 sm:px-6">
+                <h3 className="text-2xl sm:text-3xl lg:text-4xl font-black text-center leading-relaxed text-slate-900 px-2 sm:px-8">
                   {currentQ.question}
                 </h3>
               </div>
@@ -660,7 +717,7 @@ export default function PresentationScreen({
                 <motion.div
                   initial={{ opacity: 0, scale: 0.92, y: -10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
-                  className={`mb-5 p-4 sm:p-5 rounded-3xl shadow-xl border-2 text-white flex flex-col sm:flex-row items-center justify-between gap-4 ${
+                  className={`mb-6 p-4 sm:p-5 rounded-3xl shadow-xl border-2 text-white flex flex-col sm:flex-row items-center justify-between gap-4 ${
                     resultBanner.isCorrect
                       ? 'bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 border-emerald-300'
                       : 'bg-gradient-to-r from-rose-600 via-red-600 to-amber-700 border-rose-300'
@@ -684,10 +741,10 @@ export default function PresentationScreen({
                     {resultBanner.isCorrect && (
                       <button
                         onClick={() => triggerFullScreenFireworks(4000)}
-                        className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black rounded-2xl text-xs transition flex items-center gap-1.5 shadow-md whitespace-nowrap active:scale-95"
+                        className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black rounded-2xl text-xs sm:text-sm transition flex items-center gap-1.5 shadow-md whitespace-nowrap active:scale-95"
                         title="Bắn pháo hoa rực rỡ toàn màn hình"
                       >
-                        <Sparkles size={14} /> <span>Bắn pháo hoa 🎆</span>
+                        <Sparkles size={16} /> <span>Bắn pháo hoa 🎆</span>
                       </button>
                     )}
                     <button
@@ -697,16 +754,16 @@ export default function PresentationScreen({
                           : buildMCEncouragementScript(selectedResult.displayText, String.fromCharCode(65 + currentQ.correctAnswer), currentQ.options[currentQ.correctAnswer], currentQIndex);
                         speakQuestion(speech, { genderPreference: currentVoicePref, rate: 1.12 });
                       }}
-                      className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-2xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-white/30 whitespace-nowrap"
+                      className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-2xl text-xs sm:text-sm font-bold transition flex items-center gap-1.5 shrink-0 border border-white/30 whitespace-nowrap"
                     >
-                      <Volume2 size={15} /> <span>{resultBanner.isCorrect ? 'MC Chúc Mừng 🎤' : 'MC Động Viên 🎤'}</span>
+                      <Volume2 size={16} /> <span>{resultBanner.isCorrect ? 'MC Chúc Mừng 🎤' : 'MC Động Viên 🎤'}</span>
                     </button>
                   </div>
                 </motion.div>
               )}
 
-              {/* 4 Options Grid */}
-              <div className="grid sm:grid-cols-2 gap-3 sm:gap-5">
+              {/* 4 Options Grid - Fully Legible Without Truncation */}
+              <div className="grid sm:grid-cols-2 gap-4 sm:gap-6 mb-6">
                 {currentQ.options.map((opt, i) => {
                   const isCorrect = currentQ.correctAnswer === i;
                   const isSelected = selectedAnswer === i;
@@ -734,7 +791,7 @@ export default function PresentationScreen({
                       badgeStyle = "bg-white text-rose-800";
                     }
                     statusTag = (
-                      <span className="text-[11px] font-black uppercase tracking-widest bg-white/25 px-2 py-0.5 rounded-full border border-white/40 animate-pulse">
+                      <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest bg-white/25 px-2.5 py-1 rounded-full border border-white/40 animate-pulse">
                         Đang chốt...
                       </span>
                     );
@@ -744,8 +801,8 @@ export default function PresentationScreen({
                       cardStyle = "bg-gradient-to-r from-emerald-500 via-green-600 to-emerald-600 border-emerald-300 text-white shadow-[0_0_35px_rgba(34,197,94,0.65)] transform scale-[1.03] z-20 ring-4 ring-emerald-300 animate-pulse";
                       badgeStyle = "bg-white text-emerald-800 font-black";
                       statusTag = (
-                        <span className="flex items-center gap-1 text-xs font-black uppercase tracking-wider bg-white/20 px-2.5 py-1 rounded-full border border-white/40">
-                          <CheckCircle2 size={16} /> ĐÁP ÁN ĐÚNG
+                        <span className="flex items-center gap-1 text-xs sm:text-sm font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full border border-white/40 shadow-xs">
+                          <CheckCircle2 size={18} /> ĐÁP ÁN ĐÚNG
                         </span>
                       );
                     } else if (isSelected) {
@@ -753,8 +810,8 @@ export default function PresentationScreen({
                       cardStyle = "bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 border-red-300 text-white shadow-[0_0_25px_rgba(239,68,68,0.5)] transform scale-[1.01] ring-4 ring-red-300 z-10";
                       badgeStyle = "bg-white text-rose-800 font-black";
                       statusTag = (
-                        <span className="flex items-center gap-1 text-xs font-black uppercase tracking-wider bg-white/20 px-2.5 py-1 rounded-full border border-white/40">
-                          <XCircle size={16} /> BẠN ĐÃ CHỌN (SAI)
+                        <span className="flex items-center gap-1 text-xs sm:text-sm font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full border border-white/40 shadow-xs">
+                          <XCircle size={18} /> BẠN ĐÃ CHỌN (SAI)
                         </span>
                       );
                     } else {
@@ -764,15 +821,15 @@ export default function PresentationScreen({
                   } else {
                     // QUESTION SELECTION PHASE
                     if (isSelected) {
-                      cardStyle = "bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-white border-amber-300 shadow-[0_0_30px_rgba(245,158,11,0.6)] transform scale-[1.03] ring-4 ring-amber-300/80 z-20";
+                      cardStyle = "bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-white border-amber-300 shadow-[0_0_30px_rgba(245,158,11,0.6)] transform scale-[1.02] ring-4 ring-amber-300/80 z-20";
                       badgeStyle = "bg-white text-amber-800 font-black";
                       statusTag = (
-                        <span className="flex items-center gap-1 text-xs font-black uppercase tracking-wider bg-white/25 px-2.5 py-1 rounded-full border border-white/40 shadow-sm animate-pulse">
+                        <span className="flex items-center gap-1 text-xs sm:text-sm font-black uppercase tracking-wider bg-white/25 px-3 py-1 rounded-full border border-white/40 shadow-sm animate-pulse">
                           🎯 BẠN ĐANG CHỌN
                         </span>
                       );
                     } else {
-                      cardStyle = "bg-white border-2 border-sky-100 text-slate-800 hover:border-sky-300 hover:shadow-lg hover:scale-[1.015] cursor-pointer";
+                      cardStyle = "bg-white border-2 border-sky-100 text-slate-800 hover:border-sky-300 hover:shadow-xl hover:scale-[1.015] cursor-pointer";
                       badgeStyle = "bg-sky-100 text-sky-800";
                     }
                   }
@@ -781,19 +838,21 @@ export default function PresentationScreen({
                     <div
                       key={i}
                       onClick={() => handleSelectOption(i)}
-                      className={`relative rounded-3xl border-4 p-4 sm:p-5 flex items-center justify-between transition-all duration-300 shadow-sm select-none ${cardStyle}`}
+                      className={`relative rounded-3xl border-4 p-5 sm:p-6 lg:p-7 min-h-[96px] flex items-center justify-between transition-all duration-300 shadow-md select-none ${cardStyle}`}
                     >
-                      <div className="flex items-center gap-4 flex-1 min-w-0 mr-3">
-                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-xl shrink-0 shadow-inner ${badgeStyle}`}>
+                      <div className="flex items-start gap-4 sm:gap-5 flex-1 min-w-0 mr-3">
+                        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center font-black text-xl sm:text-2xl shrink-0 shadow-inner mt-0.5 ${badgeStyle}`}>
                           {String.fromCharCode(65 + i)}
                         </div>
-                        <span className="text-lg sm:text-xl font-bold truncate">
-                          {opt}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-base sm:text-xl lg:text-2xl font-bold leading-relaxed break-words text-left">
+                            {opt}
+                          </div>
+                        </div>
                       </div>
 
                       {statusTag && (
-                        <div className="shrink-0">
+                        <div className="shrink-0 ml-2 self-center">
                           {statusTag}
                         </div>
                       )}

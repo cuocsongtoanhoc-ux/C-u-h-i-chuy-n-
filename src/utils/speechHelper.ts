@@ -13,9 +13,19 @@ let currentAudio: HTMLAudioElement | null = null;
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let hasUnlockedAudio = false;
 
+// Audio queue state for client-side streaming Google TTS
+interface ClientAudioQueue {
+  chunks: string[];
+  currentIndex: number;
+  options: SpeakOptions;
+  isCancelled: boolean;
+  activeAudio: HTMLAudioElement | null;
+}
+let activeClientQueue: ClientAudioQueue | null = null;
+
 // Cross-device audio unlocker ensuring audio plays on any other computer without autoplay restrictions
 export function unlockAudio() {
-  if (typeof window === 'undefined' || hasUnlockedAudio) return;
+  if (typeof window === 'undefined') return;
   try {
     const silentAudio = new Audio();
     // 1-sample silent WAV to unlock HTML5 audio on mobile/classroom computers
@@ -24,6 +34,15 @@ export function unlockAudio() {
     silentAudio.play().then(() => {
       hasUnlockedAudio = true;
     }).catch(() => {});
+
+    // Also unlock Web Audio AudioContext if available
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (AudioCtx) {
+      const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    }
   } catch {}
 }
 
@@ -49,7 +68,17 @@ export function getVietnameseVoices(): SpeechSynthesisVoice[] {
 }
 
 export function stopSpeaking() {
-  // 1. Stop audio element
+  // 1. Cancel active client TTS queue
+  if (activeClientQueue) {
+    activeClientQueue.isCancelled = true;
+    if (activeClientQueue.activeAudio) {
+      activeClientQueue.activeAudio.pause();
+      activeClientQueue.activeAudio.src = '';
+    }
+    activeClientQueue = null;
+  }
+
+  // 2. Stop audio element
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.currentTime = 0;
@@ -57,7 +86,7 @@ export function stopSpeaking() {
     currentAudio = null;
   }
 
-  // 2. Stop speech synthesis
+  // 3. Stop speech synthesis
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     currentUtterance = null;
@@ -108,6 +137,137 @@ export function clearAudioCache() {
 }
 
 /**
+ * Split text into natural Vietnamese sentence chunks <= 90 chars
+ * so public Google TTS audio stream plays without length limit or 400 error.
+ */
+function splitTextForClientTTS(text: string, maxLen = 90): string[] {
+  const clean = text
+    .replace(/\s+/g, ' ')
+    .replace(/[\r\n]+/g, '. ')
+    .trim();
+
+  if (!clean) return [];
+  if (clean.length <= maxLen) return [clean];
+
+  // Split on punctuation delimiters
+  const rawParts = clean.split(/([.?!:;,]+|\n)/);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (let i = 0; i < rawParts.length; i++) {
+    const part = rawParts[i].trim();
+    if (!part) continue;
+
+    if ((current + ' ' + part).trim().length <= maxLen) {
+      current = (current + ' ' + part).trim();
+    } else {
+      if (current) chunks.push(current);
+      if (part.length <= maxLen) {
+        current = part;
+      } else {
+        // Fallback: split words if single clause is longer than maxLen
+        const words = part.split(' ');
+        let sub = '';
+        for (const w of words) {
+          if ((sub + ' ' + w).trim().length <= maxLen) {
+            sub = (sub + ' ' + w).trim();
+          } else {
+            if (sub) chunks.push(sub);
+            sub = w;
+          }
+        }
+        current = sub;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.filter(c => c.length > 0);
+}
+
+/**
+ * High reliability client-side Google Vietnamese TTS audio stream player.
+ * Works on any hosting (Vercel static, GitHub Pages, Netlify) without backend server or local OS voice pack!
+ */
+function playClientGoogleTTS(text: string, options: SpeakOptions) {
+  const chunks = splitTextForClientTTS(text);
+  if (chunks.length === 0) {
+    options.onEnd?.();
+    return;
+  }
+
+  const queue: ClientAudioQueue = {
+    chunks,
+    currentIndex: 0,
+    options,
+    isCancelled: false,
+    activeAudio: null,
+  };
+  activeClientQueue = queue;
+
+  function playNext() {
+    if (!activeClientQueue || activeClientQueue.isCancelled) return;
+
+    if (activeClientQueue.currentIndex >= activeClientQueue.chunks.length) {
+      const onEnd = activeClientQueue.options.onEnd;
+      activeClientQueue = null;
+      currentAudio = null;
+      onEnd?.();
+      return;
+    }
+
+    const chunkText = activeClientQueue.chunks[activeClientQueue.currentIndex];
+    const streamUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunkText)}`;
+    
+    const audio = new Audio(streamUrl);
+    audio.playbackRate = activeClientQueue.options.rate ?? 1.12;
+    activeClientQueue.activeAudio = audio;
+    currentAudio = audio;
+
+    // Preload the next chunk in parallel for seamless playback
+    if (activeClientQueue.currentIndex + 1 < activeClientQueue.chunks.length) {
+      const nextText = activeClientQueue.chunks[activeClientQueue.currentIndex + 1];
+      const nextUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(nextText)}`;
+      const nextAudio = new Audio(nextUrl);
+      nextAudio.preload = 'auto';
+    }
+
+    audio.onplay = () => {
+      if (activeClientQueue && activeClientQueue.currentIndex === 0) {
+        activeClientQueue.options.onStart?.();
+      }
+    };
+
+    audio.onended = () => {
+      if (!activeClientQueue || activeClientQueue.isCancelled) return;
+      activeClientQueue.currentIndex++;
+      playNext();
+    };
+
+    audio.onerror = (e) => {
+      console.warn('Client Google TTS chunk stream notice, using Web Speech synthesis:', e);
+      if (activeClientQueue && !activeClientQueue.isCancelled) {
+        const remaining = activeClientQueue.chunks.slice(activeClientQueue.currentIndex).join(' ');
+        const opts = activeClientQueue.options;
+        activeClientQueue = null;
+        fallbackWebSpeech(remaining, opts);
+      }
+    };
+
+    audio.play().catch((err) => {
+      console.warn('Direct audio playback notice:', err);
+      if (activeClientQueue && !activeClientQueue.isCancelled) {
+        const remaining = activeClientQueue.chunks.slice(activeClientQueue.currentIndex).join(' ');
+        const opts = activeClientQueue.options;
+        activeClientQueue = null;
+        fallbackWebSpeech(remaining, opts);
+      }
+    });
+  }
+
+  playNext();
+}
+
+/**
  * Pre-fetch TTS audio in the background before it is needed on screen.
  * Once pre-fetched, speakQuestion() will play instantly (0ms latency, truly simultaneous with visual updates).
  */
@@ -133,6 +293,11 @@ export async function prefetchSpeech(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const blob = await res.blob();
+    // Validate that response is valid audio, not an HTML error page
+    if (blob.type.includes('html')) {
+      throw new Error('Received HTML instead of audio from /api/tts');
+    }
+
     const blobUrl = URL.createObjectURL(blob);
     const audio = new Audio(blobUrl);
     audio.preload = 'auto';
@@ -142,7 +307,7 @@ export async function prefetchSpeech(
     audio.load();
     audioPreloadCache.set(cacheKey, audio);
   } catch (err) {
-    console.debug('Background audio prefetch non-fatal error:', err);
+    console.debug('Background audio prefetch notice:', err);
   } finally {
     prefetchPendingKeys.delete(cacheKey);
   }
@@ -150,37 +315,69 @@ export async function prefetchSpeech(
 
 export function speakQuestion(text: string, options: SpeakOptions = {}) {
   stopSpeaking();
+  unlockAudio();
 
   const trimmed = text.trim();
   if (!trimmed) return;
 
-  const targetVoice = resolveGeminiVoiceName(options.genderPreference, options.questionIndex ?? 0);
-  const cacheKey = `${targetVoice}:${trimmed}`;
-
-  // If user selected browser-only voice
+  // If user explicitly selected browser-only voice
   if (options.genderPreference === 'browser') {
     fallbackWebSpeech(trimmed, options);
     return;
   }
 
-  // Primary High-Fidelity Native Vietnamese TTS (Instant playback if pre-fetched, or streaming fetch)
-  try {
-    let audio: HTMLAudioElement;
+  const targetVoice = resolveGeminiVoiceName(options.genderPreference, options.questionIndex ?? 0);
+  const cacheKey = `${targetVoice}:${trimmed}`;
 
-    if (audioPreloadCache.has(cacheKey)) {
-      // 🚀 INSTANT 0ms ZERO-LATENCY PLAYBACK: Perfectly simultaneous with UI display!
-      audio = audioPreloadCache.get(cacheKey)!;
-      audio.currentTime = 0;
-      audio.playbackRate = options.rate ?? 1.12;
-    } else {
-      const audioUrl = `/api/tts?text=${encodeURIComponent(trimmed)}&voice=${encodeURIComponent(targetVoice)}`;
-      audio = new Audio(audioUrl);
-      audio.playbackRate = options.rate ?? 1.12;
-    }
-
+  // 1. Check if high-fidelity backend audio was already pre-fetched
+  if (audioPreloadCache.has(cacheKey)) {
+    const audio = audioPreloadCache.get(cacheKey)!;
+    audio.currentTime = 0;
+    audio.playbackRate = options.rate ?? 1.12;
     currentAudio = audio;
 
     let hasStarted = false;
+    audio.onplay = () => {
+      if (!hasStarted) {
+        hasStarted = true;
+        options.onStart?.();
+      }
+    };
+    audio.onended = () => {
+      currentAudio = null;
+      options.onEnd?.();
+    };
+    audio.onerror = () => {
+      currentAudio = null;
+      playClientGoogleTTS(trimmed, options);
+    };
+
+    audio.play().catch(() => {
+      playClientGoogleTTS(trimmed, options);
+    });
+    return;
+  }
+
+  // 2. Try fetching from backend /api/tts with rapid fallback to client Google TTS
+  try {
+    const audioUrl = `/api/tts?text=${encodeURIComponent(trimmed)}&voice=${encodeURIComponent(targetVoice)}`;
+    const audio = new Audio(audioUrl);
+    audio.playbackRate = options.rate ?? 1.12;
+    currentAudio = audio;
+
+    let hasStarted = false;
+    let hasFailed = false;
+
+    const switchToClientTTS = () => {
+      if (hasFailed) return;
+      hasFailed = true;
+      if (currentAudio === audio) {
+        audio.pause();
+        audio.src = '';
+        currentAudio = null;
+      }
+      playClientGoogleTTS(trimmed, options);
+    };
 
     audio.onplay = () => {
       if (!hasStarted) {
@@ -194,29 +391,36 @@ export function speakQuestion(text: string, options: SpeakOptions = {}) {
       options.onEnd?.();
     };
 
-    audio.onerror = (e) => {
-      console.warn('Backend TTS failed, checking local Vietnamese voice fallback...', e);
-      currentAudio = null;
-      fallbackWebSpeech(trimmed, options);
+    audio.onerror = () => {
+      // Backend /api/tts not found (e.g. static Vercel / Netlify / 404) -> Seamlessly switch to Client Google TTS!
+      switchToClientTTS();
     };
+
+    // If server takes more than 2.0s (e.g. cold start, timeout, or blocked on static web)
+    const timeoutId = setTimeout(() => {
+      if (!hasStarted && !hasFailed && currentAudio === audio) {
+        console.log('[TTS] Server TTS taking >2s on web, switching immediately to Client Google TTS...');
+        switchToClientTTS();
+      }
+    }, 2000);
 
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
+          clearTimeout(timeoutId);
           if (!hasStarted) {
             hasStarted = true;
             options.onStart?.();
           }
         })
-        .catch((err) => {
-          console.warn('Audio play autoplay restricted or network error, attempting fallback:', err);
-          fallbackWebSpeech(trimmed, options);
+        .catch(() => {
+          clearTimeout(timeoutId);
+          switchToClientTTS();
         });
     }
-  } catch (err) {
-    console.warn('Error starting audio playback:', err);
-    fallbackWebSpeech(trimmed, options);
+  } catch {
+    playClientGoogleTTS(trimmed, options);
   }
 }
 
@@ -228,25 +432,24 @@ function fallbackWebSpeech(text: string, options: SpeakOptions) {
   }
 
   const viVoices = getVietnameseVoices();
-  if (viVoices.length === 0) {
-    console.warn('No native Vietnamese voice installed on client OS.');
-    options.onError?.(new Error('No Vietnamese voice found on system.'));
-    return;
-  }
-
-  // Prefer high quality natural Vietnamese voices if available
-  const preferredVoice = viVoices.find(v => 
-    v.name.includes('Natural') || 
-    v.name.includes('Online') || 
-    v.name.includes('Google') || 
-    v.name.includes('Linh')
-  ) || viVoices[0];
-
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'vi-VN';
-  utterance.voice = preferredVoice;
+
+  if (viVoices.length > 0) {
+    // Prefer high quality natural Vietnamese voices if available
+    const preferredVoice = viVoices.find(v => 
+      v.name.includes('Natural') || 
+      v.name.includes('Online') || 
+      v.name.includes('Google') || 
+      v.name.includes('Linh') ||
+      v.name.includes('An') ||
+      v.name.includes('Vietnamese')
+    ) || viVoices[0];
+    utterance.voice = preferredVoice;
+  }
+
   utterance.rate = options.rate ?? 1.14; // Nhanh nhẹn, sôi nổi
-  utterance.pitch = 1.12; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
+  utterance.pitch = 1.10; // Cao hơn một chút giúp âm sắc thanh thoát, tươi vui
 
   if (options.onStart) utterance.onstart = () => options.onStart?.();
   if (options.onEnd) utterance.onend = () => options.onEnd?.();

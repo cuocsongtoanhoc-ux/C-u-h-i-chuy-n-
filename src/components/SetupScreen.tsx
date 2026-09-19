@@ -127,6 +127,9 @@ export default function SetupScreen({ onStart }: SetupScreenProps) {
   const [voicePref, setVoicePref] = useState<VoiceGenderPreference>('aoede');
   const [isTestingVoice, setIsTestingVoice] = useState(false);
 
+  // Fullscreen preference for presentation
+  const [startInFullScreen, setStartInFullScreen] = useState(true);
+
   // Auto pre-fetch first question audio in background for 0ms simultaneous voice playback
   useEffect(() => {
     if (questions && questions.length > 0) {
@@ -440,6 +443,13 @@ D. Tây Ninh
 
     const classesList = buildClasses();
     const customStudents = parseNamedStudents();
+
+    // Trigger Fullscreen on direct user click for best projector experience
+    if (startInFullScreen && !document.fullscreenElement) {
+      try {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } catch {}
+    }
 
     onStart(
       currentQuestions,
@@ -1214,6 +1224,19 @@ D. Cần Thơ
 
           {/* Start Presentation Button - Vibrant and Celebratory */}
           <div className="mt-6 pt-4 border-t border-slate-100">
+            {/* Fullscreen Option */}
+            <div className="flex items-center justify-center sm:justify-end mb-3 px-1">
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm font-bold text-slate-700 hover:text-sky-700 bg-sky-50/80 hover:bg-sky-100/90 px-3.5 py-1.5 rounded-full border border-sky-200 transition">
+                <input
+                  type="checkbox"
+                  checked={startInFullScreen}
+                  onChange={(e) => setStartInFullScreen(e.target.checked)}
+                  className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 border-slate-300 cursor-pointer"
+                />
+                <span>🖥️ Tự động bật Toàn Màn Hình (F11) khi bắt đầu</span>
+              </label>
+            </div>
+
             <button
               onClick={handleStart}
               className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-700 hover:via-rose-700 hover:to-amber-600 text-white py-4 sm:py-4.5 rounded-2xl font-black text-base sm:text-lg transition-all shadow-lg shadow-rose-300/60 flex items-center justify-center gap-3 transform hover:scale-[1.01] active:scale-[0.99]"
